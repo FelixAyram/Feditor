@@ -3464,6 +3464,13 @@
                         omsi::updater::start_check();
                     }
                     using omsi::updater::State;
+                    // (FEDITOR_UPDATE_AUTO=1: accept by itself - for testing the update path)
+                    static const bool s_upd_auto = [] {
+                        const char* e = std::getenv("FEDITOR_UPDATE_AUTO");
+                        return e && *e == '1';
+                    }();
+                    if (s_upd_auto && omsi::updater::status().state == State::Available)
+                        omsi::updater::start_download_and_install();
                     const auto us = omsi::updater::status();
                     const bool show = !omsi::updater::dismissed() &&
                                       (us.state == State::Available || us.state == State::Downloading ||

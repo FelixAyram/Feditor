@@ -344,14 +344,21 @@ bool HelloO3dRenderer::create_fxaa_pipeline() {
 
     std::filesystem::path hlsl;
     {
-        const char* candidates[] = {
+        // beside the .exe first (a release folder started from anywhere), then the working / source tree
+        wchar_t exe_buf[MAX_PATH]{};
+        GetModuleFileNameW(nullptr, exe_buf, MAX_PATH);
+        const std::filesystem::path exe_dir = std::filesystem::path(exe_buf).parent_path();
+        const std::filesystem::path candidates[] = {
+            exe_dir / "third_party" / "smaa" / "smaa_dx12.hlsl",
+            exe_dir / "shaders" / "smaa_dx12.hlsl",
             "third_party/smaa/smaa_dx12.hlsl",
             "../third_party/smaa/smaa_dx12.hlsl",
             "../../third_party/smaa/smaa_dx12.hlsl",
         };
-        for (const char* c : candidates) {
-            if (std::filesystem::exists(c)) {
-                hlsl = std::filesystem::absolute(c);
+        std::error_code ec;
+        for (const auto& c : candidates) {
+            if (std::filesystem::exists(c, ec)) {
+                hlsl = std::filesystem::absolute(c, ec);
                 break;
             }
         }

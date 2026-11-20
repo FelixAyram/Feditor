@@ -236,6 +236,13 @@ else()
     target_sources(omsi_f4_viewer PRIVATE src/vehicle/oo_vehicle_stub.cpp)
 endif()
 
+# SMAA post-process shader, read at start-up beside the .exe
+add_custom_command(TARGET omsi_f4_viewer POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory "$<TARGET_FILE_DIR:omsi_f4_viewer>/third_party/smaa"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different "${CMAKE_SOURCE_DIR}/third_party/smaa/smaa_dx12.hlsl"
+            "${CMAKE_SOURCE_DIR}/third_party/smaa/SMAA.hlsl" "$<TARGET_FILE_DIR:omsi_f4_viewer>/third_party/smaa/"
+    COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/assets"
+            "$<TARGET_FILE_DIR:omsi_f4_viewer>/assets")
 # map dependency scanner (Python) used by Archivo > Empaquetar mapa
 add_custom_command(TARGET omsi_f4_viewer POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/tools/map_dependency_scanner"

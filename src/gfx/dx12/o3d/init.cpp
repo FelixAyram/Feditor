@@ -53,7 +53,8 @@ bool HelloO3dRenderer::initialize(HWND__* hwnd, std::uint32_t width, std::uint32
     try {
         if (!create_device_and_swapchain(hwnd)) return false;
         if (!create_pipeline()) return false;
-        if (!create_fxaa_pipeline()) return false;
+        // (SMAA is optional: without its shader the editor starts without anti-aliasing - it closed at once)
+        if (!create_fxaa_pipeline()) omsi::log::warn("SMAA off: post-process shader not available");
         if (!create_axis_pipeline()) return false;
         if (!create_constant_buffer()) return false;
         if (!upload_axis_gpu()) return false;

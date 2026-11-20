@@ -167,6 +167,17 @@ std::filesystem::path exe_path() {
     return buf;
 }
 
+// The version this build compares with. Testing the update path: FEDITOR_UPDATE_TEST_VERSION pretends an older
+// build, only while update_test.flag sits beside the .exe (the installer deletes it, so the restarted editor
+// is the real version and does not update again).
+std::string local_version() {
+    if (const char* e = std::getenv("FEDITOR_UPDATE_TEST_VERSION"); e && *e) {
+        std::error_code ec;
+        if (std::filesystem::exists(exe_path().parent_path() / L"update_test.flag", ec)) return e;
+    }
+    return kEditorVersion;
+}
+
 } // namespace
 
 void start_check() {
@@ -200,8 +211,9 @@ void start_check() {
         g_status.latest = (!tag.empty() && (tag[0] == 'v' || tag[0] == 'V')) ? tag.substr(1) : tag;
         g_status.notes = notes;
         g_zip_url = zip;
-        g_status.state = (!tag.empty() && !zip.empty() && newer(tag, kEditorVersion)) ? State::Available : State::UpToDate;
-        log::info("updater: latest release " + tag + " (this build " + kEditorVersion + ")" +
+        const std::string mine = local_version();
+        g_status.state = (!tag.empty() && !zip.empty() && newer(tag, mine)) ? State::Available : State::UpToDate;
+        log::info("updater: latest release " + tag + " (this build " + mine + ")" +
                   (g_status.state == State::Available ? " - update available" : ""));
     }).detach();
 }
@@ -255,6 +267,7 @@ bool launch_installer() {
           << L"tasklist /FI \"PID eq " << pid << L"\" | find \"" << pid << L"\" >nul && (timeout /t 1 >nul & goto wait)\r\n"
           << L"powershell -NoProfile -ExecutionPolicy Bypass -Command \"Expand-Archive -LiteralPath '" << zip.wstring()
           << L"' -DestinationPath '" << dir.wstring() << L"' -Force\"\r\n"
+          << L"del /q \"" << (dir / L"update_test.flag").wstring() << L"\" 2>nul\r\n"
           << L"start \"\" \"" << exe.wstring() << L"\"\r\n";
     }
     std::wstring cmd = L"cmd.exe /c \"" + script.wstring() + L"\"";

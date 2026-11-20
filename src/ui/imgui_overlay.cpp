@@ -87,6 +87,14 @@ void try_load_editor_font() {
 #endif
     };
     auto add_rel = [&](const char* rel, float size) -> ImFont* {
+        // beside the .exe first (started from a shortcut the working folder is elsewhere)
+        {
+            wchar_t exe_buf[MAX_PATH]{};
+            GetModuleFileNameW(nullptr, exe_buf, MAX_PATH);
+            const auto p = std::filesystem::path(exe_buf).parent_path() / rel;
+            const auto u8 = p.u8string();
+            if (ImFont* f = add(std::string(u8.begin(), u8.end()).c_str(), size)) return f;
+        }
         for (const char* r : roots) {
             if (ImFont* f = add((std::string(r) + rel).c_str(), size)) return f;
         }

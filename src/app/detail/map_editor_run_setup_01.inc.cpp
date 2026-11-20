@@ -166,11 +166,16 @@
     editor::PlaceFxSystem place_fx{};
     editor::EditorSfx editor_sfx{};
     {
+        // beside the .exe (a release folder), else the source tree it was built from
         std::filesystem::path sfx_dir;
+        {
+            wchar_t exe_buf[MAX_PATH]{};
+            GetModuleFileNameW(nullptr, exe_buf, MAX_PATH);
+            sfx_dir = std::filesystem::path(exe_buf).parent_path() / "assets" / "editor_sfx";
+        }
 #ifdef OMSI_F4_SOURCE_DIR
-        sfx_dir = std::filesystem::path(OMSI_F4_SOURCE_DIR) / "assets" / "editor_sfx";
-#else
-        sfx_dir = std::filesystem::path("assets") / "editor_sfx";
+        if (std::error_code ec; !std::filesystem::exists(sfx_dir, ec))
+            sfx_dir = std::filesystem::path(OMSI_F4_SOURCE_DIR) / "assets" / "editor_sfx";
 #endif
         if (!editor_sfx.init(sfx_dir)) log::warn("EditorSfx init failed — silent place feedback");
         editor_sfx.set_pack(editor_ui_settings.sfx_pack.empty() ? "blocky" : editor_ui_settings.sfx_pack);
