@@ -1,0 +1,4 @@
+body { min-width: 480px; }
+#main { background: #1e293b; }
+#entry-list { max-height: 280px; min-height: 160px; }
+#map-block.hidden { display: none; }

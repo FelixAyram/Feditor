@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- tw.css + style.css + app.js injected from C++ OnDOMReady -->
+</head>
+<body class="flex flex-col h-full overflow-hidden bg-slate-800">
+  <div class="section flex-1 min-h-0 flex flex-col">
+    <div class="section-h">Perfiles (texture wrapping)</div>
+    <div class="list-b scroll-y flex-1" id="profile-list"></div>
+    <div class="p-2 flex gap-1">
+      <button type="button" class="btn flex-1" data-cmd="wrapDel">Borrar</button>
+      <button type="button" class="btn flex-1" data-cmd="wrapEdit">Renombrar</button>
+      <button type="button" class="btn flex-1" data-cmd="wrapAdd">Agregar</button>
+    </div>
+    <div class="p-2 pt-0 flex gap-1">
+      <button type="button" class="btn flex-1 btn-ghost" data-cmd="wrapOpen">Abrir textur-wrapper</button>
+      <button type="button" class="btn flex-1 btn-primary" data-cmd="applyTex">Aplicar textura</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-h">Texturas</div>
+    <div class="list-b scroll-y" id="tex-list" style="max-height:120px"></div>
+    <div class="p-2 flex gap-1">
+      <button type="button" class="btn flex-1" data-cmd="texDel">Borrar</button>
+      <button type="button" class="btn flex-1" data-cmd="texPaste">Pegar</button>
+      <button type="button" class="btn flex-1" data-cmd="texAdd">Agregar</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-h">Path</div>
+    <div class="list-b scroll-y" id="path-list" style="max-height:100px"></div>
+    <div class="p-2 flex gap-1">
+      <button type="button" class="btn flex-1" data-cmd="pathDel">Borrar</button>
+      <button type="button" class="btn flex-1" data-cmd="pathCreate">Crear en 2D</button>
+      <button type="button" class="btn flex-1" data-cmd="pathAdd">Agregar</button>
+    </div>
+  </div>
+
+  <div class="p-2 flex flex-col gap-2">
+    <button type="button" class="btn btn-warn w-full" data-cmd="openSli">Abrir archivo .sli</button>
+    <button type="button" class="btn btn-success w-full" data-cmd="save">Guardar archivo .sli</button>
+    <button type="button" class="btn btn-danger w-full" data-cmd="cancel">Cancelar</button>
+    <label class="text-sm text-slate-300 flex items-center gap-2">
+      <input type="checkbox" id="export-copy"> Copiar texturas al exportar
+    </label>
+  </div>
+</body>
+</html>

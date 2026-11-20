@@ -1,0 +1,40 @@
+# build output
+/build/
+/build-*/
+/out/
+/bin/
+/dist/
+/release/
+*.exe
+*.dll
+*.pdb
+*.lib
+*.exp
+*.ilk
+*.obj
+compile_commands.json
+
+# Rust
+/ffi/omsi_vehicle_ffi/target/
+
+# editor runtime files
+*.log
+*.dmp
+imgui.ini
+crash_report.txt
+crash_breadcrumbs_*.txt
+omsi_f4_editor.cfg
+omsi_f4_engine_prefs.cfg
+omsi_f4_beamng_prefs.cfg
+_shots/
+
+# backups / editors
+*.bak
+*.orig
+*.original
+*.tmp
+.vs/
+.vscode/
+.idea/
+__pycache__/
+*.pyc

@@ -1,0 +1,185 @@
+#pragma once
+
+#include <cstddef>
+#include <cstring>
+
+namespace omsi::ui::i18n {
+
+enum class Lang { Es = 0, En = 1 };
+
+inline Lang& state() {
+    static Lang lang = Lang::Es;
+    return lang;
+}
+inline void set_language(Lang l) { state() = l; }
+inline Lang language() { return state(); }
+inline const char* language_code() { return state() == Lang::En ? "en" : "es"; }
+
+struct Entry {
+    const char* key;
+    const char* es;
+    const char* en;
+};
+
+inline const Entry* table(std::size_t& count) {
+    static const Entry kTable[] = {
+        // Existing strings (kept so old call sites keep working).
+        {"btn.download_aerial", "Descargar ortofoto", "Download aerial"},
+        {"btn.download_dem", "Descargar DEM", "Download DEM"},
+        {"btn.import_dem", "Importar DEM", "Import DEM"},
+        {"dem.hint", "DEM: elige proveedor y resolucion; se alinea al tile activo.",
+         "DEM: pick provider and resolution; aligned to the active tile."},
+        {"terrain.view_only", "Solo visualizacion: brush deshabilitado.",
+         "View only: brush disabled."},
+        {"terrain.brush_circle_hint", "Brush circular (radio en metros).",
+         "Circular brush (radius in meters)."},
+        {"opt.tile_radius", "Radio de tiles cargados (editor).", "Loaded tile radius (editor)."},
+        {"opt.visual_radius", "Radio visual / culling.", "Visual radius / culling."},
+
+        // Tool tabs.
+        {"tool.tile", "Tile", "Tile"},
+        {"tool.object", "Objeto", "Object"},
+        {"tool.spline", "Spline", "Spline"},
+        {"tool.terrain", "Terreno", "Terrain"},
+        {"tool.traffic", "Trafico", "Traffic"},
+        {"tool.tracks", "Tracks", "Tracks"},
+        {"tool.station", "Est.", "Stn."},
+        {"tool.splineexp", "SplExp", "SplExp"},
+        {"tool.signals", "Senales", "Signals"},
+
+        // Common actions.
+        {"common.new", "Nuevo", "New"},
+        {"common.delete", "Borrar", "Delete"},
+        {"common.save", "Guardar", "Save"},
+        {"common.save_sco", "Guardar .sco", "Save .sco"},
+        {"common.close", "Cerrar", "Close"},
+        {"common.cancel", "Cancelar", "Cancel"},
+        {"common.undo", "Deshacer", "Undo"},
+        {"common.redo", "Rehacer", "Redo"},
+        {"common.apply", "Aplicar", "Apply"},
+        {"common.add", "Agregar", "Add"},
+        {"common.none", "Ninguno", "None"},
+        {"common.delete_selected", "Borrar seleccion", "Delete selection"},
+
+        // Path editor.
+        {"paths.title", "Paths .sco", "Paths .sco"},
+        {"paths.tab.paths", "Paths", "Paths"},
+        {"paths.tab.traffic", "Semaforos", "Traffic lights"},
+        {"paths.tab.props", "Props", "Props"},
+        {"paths.tab.textures", "Texturas", "Textures"},
+        {"paths.new", "+ Path", "+ Path"},
+        {"paths.hide_model", "Ocultar modelo", "Hide model"},
+        {"paths.only_active", "Solo path activo", "Active path only"},
+        {"paths.hide_nodes", "Ocultar nodos", "Hide nodes"},
+        {"paths.style", "Estilo de paths", "Path style"},
+        {"paths.style.original", "Original (3D)", "Original (3D)"},
+        {"paths.style.modern", "Moderno (pagina)", "Modern (page)"},
+        {"paths.no_selection", "Sin path seleccionado", "No path selected"},
+        {"paths.x", "X", "X"},
+        {"paths.y", "Y", "Y"},
+        {"paths.z", "Z", "Z"},
+        {"paths.heading", "Heading", "Heading"},
+        {"paths.radius", "Radio", "Radius"},
+        {"paths.length", "Largo", "Length"},
+        {"paths.width", "Ancho", "Width"},
+        {"paths.grad_start", "Grad inicial", "Grad start"},
+        {"paths.grad_end", "Grad final", "Grad end"},
+        {"paths.kind", "Tipo", "Kind"},
+        {"paths.dir", "Direccion", "Direction"},
+        {"paths.turn", "Giro", "Turn"},
+        {"paths.traffic_light", "Semaforo", "Traffic light"},
+        {"paths.crossing", "Problema cruce", "Crossing problem"},
+        {"paths.block", "Bloquear path", "Block path"},
+        {"kind.street", "Calle", "Street"},
+        {"kind.sidewalk", "Vereda", "Sidewalk"},
+        {"kind.rail", "Riel", "Rail"},
+        {"kind.air", "Aire", "Air"},
+        {"dir.forward", "Sentido", "Forward"},
+        {"dir.reverse", "Reverso", "Reverse"},
+        {"dir.both", "Ambos", "Both"},
+        {"turn.none", "Ninguno", "None"},
+        {"turn.straight", "Recto", "Straight"},
+        {"turn.left", "Izquierda", "Left"},
+        {"turn.right", "Derecha", "Right"},
+
+        // Traffic lights.
+        {"tl.group", "Grupo de semaforos", "Traffic light group"},
+        {"tl.cycle", "Ciclo (s)", "Cycle (s)"},
+        {"tl.add_light", "+ Luz", "+ Light"},
+        {"tl.del_light", "Borrar luz", "Delete light"},
+        {"tl.name", "Nombre", "Name"},
+        {"tl.approach", "Approachdist (m)", "Approach dist (m)"},
+        {"tl.time", "Tiempo luz", "Light time"},
+        {"tl.add_phase", "+ Fase", "+ Phase"},
+
+        // Props.
+        {"props.friendly", "friendlyname", "friendlyname"},
+        {"props.complexity", "complexity", "complexity"},
+        {"props.rendertype", "rendertype", "rendertype"},
+        {"props.absheight", "absheight", "absheight"},
+        {"props.onlyeditor", "onlyeditor", "onlyeditor"},
+        {"props.nocollision", "nocollision", "nocollision"},
+        {"props.fixed", "fixed", "fixed"},
+        {"props.lightmap", "LightMapMapping", "LightMapMapping"},
+
+        // Textures / view.
+        {"tex.arrows", "Ver flechas", "Show arrows"},
+        {"tex.width", "Ancho real", "Real width"},
+        {"tex.opacity", "Opacidad", "Opacity"},
+        {"tex.view", "Vista", "View"},
+
+        // AA popup.
+        {"aa.join_with", "AA - unir con el path destino:", "AA - join with target path:"},
+        {"aa.at_start", "Al inicio", "At start"},
+        {"aa.at_end", "Al final", "At end"},
+
+        // Language menu.
+        {"menu.language", "Idioma", "Language"},
+        {"menu.spanish", "Espanol", "Spanish"},
+        {"menu.english", "Ingles", "English"},
+    };
+    count = sizeof(kTable) / sizeof(kTable[0]);
+    return kTable;
+}
+
+// Translate with an explicit Spanish default (for keys not in the table yet).
+inline const char* tr(const char* key, const char* es_default) {
+    if (!key) return "";
+    std::size_t n = 0;
+    const Entry* t = table(n);
+    for (std::size_t i = 0; i < n; ++i) {
+        if (std::strcmp(t[i].key, key) != 0) continue;
+        if (state() == Lang::En && t[i].en) return t[i].en;
+        if (t[i].es) return t[i].es;
+        break;
+    }
+    return es_default ? es_default : key;
+}
+
+inline const char* tr(const char* key) { return tr(key, key); }
+
+// Translate a Spanish UI literal (incremental wrapping of existing strings). Returns the English
+// translation when the language is EN, otherwise the original Spanish text.
+struct LitEntry {
+    const char* es;
+    const char* en;
+};
+inline const LitEntry* lit_table(std::size_t& count) {
+    static const LitEntry kTable[] = {
+        // LIT_TABLE_BEGIN
+        // LIT_TABLE_END
+    };
+    count = sizeof(kTable) / sizeof(kTable[0]);
+    return kTable;
+}
+inline const char* tr_lit(const char* es) {
+    if (!es) return "";
+    if (state() == Lang::Es) return es;
+    std::size_t n = 0;
+    const LitEntry* t = lit_table(n);
+    for (std::size_t i = 0; i < n; ++i)
+        if (std::strcmp(t[i].es, es) == 0) return t[i].en;
+    return es;
+}
+
+} // namespace omsi::ui::i18n

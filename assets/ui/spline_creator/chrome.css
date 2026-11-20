@@ -1,0 +1,13 @@
+.toolbar-row { row-gap: .35rem; }
+.snap-select { width: 7.5rem; flex-shrink: 0; }
+.tool-icons .btn { min-width: 2rem; padding: .35rem .45rem; }
+.btn-toggle.active { background: #2563eb; border-color: #2563eb; color: #fff; }
+.sli-text {
+  flex: 1 1 0;
+  min-height: 0;
+  resize: none;
+  font-family: Consolas, "Courier New", monospace;
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: pre;
+}

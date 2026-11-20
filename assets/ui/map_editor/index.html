@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!-- No CDN / no rebuild: edit panel.css + app.js and press F5 in the editor. -->
+</head>
+<body>
+  <div id="root">
+    <header class="topbar">
+      <button type="button" data-menu="archivo">Archivo</button>
+      <button type="button" data-menu="herramientas">Herramientas</button>
+      <button type="button" data-menu="vista">Vista</button>
+      <span class="sep">|</span>
+      <span id="map-name" class="map-name"></span>
+      <button type="button" id="btn-reload-ui" title="Recargar interfaz (F5) — sin recompilar">Recargar interfaz</button>
+      <span id="stats-pill" class="stats"></span>
+    </header>
+    <div class="body">
+      <nav id="tab-strip" class="tabs scroll-y"></nav>
+      <div class="main">
+        <div id="tool-content" class="content scroll-y"></div>
+        <footer id="status-bar" class="status"></footer>
+      </div>
+    </div>
+  </div>
+  <!-- panel.css + app.js injected from C++ OnDOMReady (Ultralight file:// assets are unreliable) -->
+</body>
+</html>

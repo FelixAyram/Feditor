@@ -1,0 +1,6 @@
+v9 — memory + undo hardnening
+1) EditorSnapshot includes attachments + spline_attachments + spawn ids
+2) apply_editor_snapshot rebuilds attach maps
+3) object_geom_equal: full rot + varparent
+4) touch_edited_* helpers (transient+dirty)
+5) After tile stream finish: re-apply hidden_* so H survives tile change

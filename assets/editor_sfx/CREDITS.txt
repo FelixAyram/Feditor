@@ -1,0 +1,18 @@
+﻿Editor SFX packs (v170)
+=======================
+
+CC0 sources (no Mojang / Minecraft assets):
+
+1) Kenney Interface Sounds — https://kenney.nl/assets/interface-sounds
+   Mirror: https://github.com/Calinou/kenney-interface-sounds
+   Used by packs: soft, synth, blocky (UI cues)
+
+2) Kenney Impact Sounds (impactMining_*) — CC0 via game mirror
+   https://github.com/matthewkeefe/cant-stop-the-swap (public/assets/sounds)
+   Original pack: https://kenney.nl/assets/impact-sounds
+   Used by pack: blocky (place / delete / thud)
+
+Packs under assets/editor_sfx/packs/{blocky,soft,synth,classic}/
+Vista menu: Feedback → Pack SFX. Default: blocky.
+
+Playback: miniaudio. Credit: Kenney.nl (CC0).

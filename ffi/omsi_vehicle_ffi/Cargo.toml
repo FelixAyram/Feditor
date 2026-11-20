@@ -1,0 +1,34 @@
+[package]
+name = "omsi_vehicle_ffi"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+description = "C ABI over openOMSI's vehicle simulation (scripts, rigid body, sound, auto-start) for the Feditor map editor"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[[bin]]
+name = "oo_drive_test"
+path = "src/bin/oo_drive_test.rs"
+
+[dependencies]
+omsi-sim = { path = "../../third_party/openOMSI/crates/omsi-sim" }
+omsi-audio = { path = "../../third_party/openOMSI/crates/omsi-audio" }
+omsi-vehicle = { path = "../../third_party/openOMSI/crates/omsi-vehicle" }
+omsi-cfg = { path = "../../third_party/openOMSI/crates/omsi-cfg" }
+omsi-content = { path = "../../third_party/openOMSI/crates/omsi-content" }
+omsi-texture = { path = "../../third_party/openOMSI/crates/omsi-texture" }
+omsi-map = { path = "../../third_party/openOMSI/crates/omsi-map" }
+omsi-scenery = { path = "../../third_party/openOMSI/crates/omsi-scenery" }
+glam = "0.30"
+log = "0.4"
+cpal = "0.15"
+
+[profile.release]
+opt-level = 3
+debug = 1
+codegen-units = 4
+lto = "thin"
+
+[workspace]

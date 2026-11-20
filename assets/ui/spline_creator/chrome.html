@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body class="flex flex-col h-full overflow-hidden bg-slate-800 p-2 gap-2">
+  <p class="text-xs text-slate-400 m-0">A caja · lápiz dibujar · clic perfil/path · Ctrl+clic multi · G mover</p>
+  <div class="flex items-center gap-2 flex-wrap toolbar-row">
+    <label class="text-xs text-slate-400">Snap:</label>
+    <select id="snap" class="select snap-select">
+      <option value="0">0.01 m</option>
+      <option value="1">0.05 m</option>
+      <option value="2">0.1 m</option>
+      <option value="3">0.5 m</option>
+      <option value="4">Libre (sin snap)</option>
+    </select>
+    <button type="button" class="btn" data-cmd="centerView">Centrar vista</button>
+    <div class="flex gap-1 tool-icons">
+      <button type="button" class="btn btn-toggle" data-cmd="espejar" title="Espejar">⇄</button>
+      <button type="button" class="btn btn-toggle" data-cmd="flip" title="Voltear">↻</button>
+      <button type="button" class="btn" data-cmd="delPt" title="Borrar">✕</button>
+      <button type="button" class="btn btn-toggle" data-cmd="pencil" title="Lápiz">✎</button>
+      <button type="button" class="btn btn-toggle" data-cmd="marquee" title="Selección caja (A)">A</button>
+      <button type="button" class="btn btn-toggle" data-cmd="drawTex" title="Dibujar texturas">T</button>
+      <button type="button" class="btn btn-toggle" data-cmd="drawPath" title="Dibujar paths">P</button>
+    </div>
+  </div>
+  <div class="section flex-1 min-h-0 flex flex-col">
+    <div class="section-h">Spline (.sli)</div>
+    <textarea id="sli-text" class="input sli-text scroll-y" readonly spellcheck="false"></textarea>
+  </div>
+</body>
+</html>

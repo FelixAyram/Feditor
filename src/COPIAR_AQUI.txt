@@ -1,0 +1,1 @@
+Extraer sobre omsi-f4-engine/. CMake: src/editor/editor_tile_bake.cpp

@@ -1,0 +1,7 @@
+body { font-size: 11px; }
+.section { margin: 4px; }
+#profile-list { min-height: 80px; max-height: 140px; }
+#tex-list { min-height: 120px; }
+.tex-item { display: flex; align-items: center; gap: 8px; text-align: left; }
+.tex-item img { width: 32px; height: 32px; object-fit: cover; border: 1px solid rgba(255,255,255,0.25); border-radius: 2px; flex: none; background: #1e293b; }
+.tex-item span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

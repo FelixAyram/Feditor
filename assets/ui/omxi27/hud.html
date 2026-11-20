@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <link rel="stylesheet" href="../shared/tw.css">
+  <link rel="stylesheet" href="style.css">
+  <title>HUD</title>
+</head>
+<body class="bg-transparent text-slate-100 p-2" style="background:transparent">
+  <div class="grid grid-cols-2 gap-2 max-w-3xl">
+    <div class="hud-panel">
+      <div class="hud-h">Sesión</div>
+      <div id="s-session">—</div>
+    </div>
+    <div class="hud-panel">
+      <div class="hud-h">Gráficos / options.cfg</div>
+      <div id="s-gfx">—</div>
+    </div>
+    <div class="hud-panel">
+      <div class="hud-h">Controles</div>
+      <div>WASD mover · Espacio/Ctrl ↑↓ · RMB mirar · LMB elegir SCO<br>
+      T +1h · G nublado · R lluvia · E entrypoints · Esc volver</div>
+    </div>
+    <div class="hud-panel">
+      <div class="hud-h">Objeto / scripts</div>
+      <div id="s-obj">—</div>
+    </div>
+  </div>
+  <script>
+    window.applyHud = function (j) {
+      const s = typeof j === "string" ? JSON.parse(j) : j;
+      const set = (id, t) => { const n = document.getElementById(id); if (n) n.textContent = t; };
+      set("s-session", s.session || "—");
+      set("s-gfx", s.gfx || "—");
+      set("s-obj", s.obj || "—");
+    };
+  </script>
+</body>
+</html>

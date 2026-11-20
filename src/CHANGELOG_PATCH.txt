@@ -1,0 +1,23 @@
+omsi-f4-engine patch v7 — hide deselect, paste keep sel, stick chain, undo inputs
+================================================================================
+
+1) Ocultar
+   - Al ocultar: deselecciona automático (single + grupo).
+   - No clickeable en 3D (pick salta hidden). Solo desde lista de instancias.
+
+2) Ctrl+V / marquee place
+   - Al confirmar con LMB conserva la selección de lo pegado.
+   - Solo se pierde selección al clickear vacío u otra instancia del tool activo.
+
+3) Pegar cadena
+   - No sigue la cadena mientras arrastrás (preview); solo al commit.
+   - Solo pega sucesores con el mismo archivo .sli.
+
+4) Undo en inputs del panel
+   - Objeto: X/Y/Z, pitch/rot/bank, parent, attach, repeat step/range, strings/combos.
+   - Spline: X/Y/Z, largo, rot, radio, Grad0/1, ΔH+valor, Skew0/1, Cant0/1, Mirror.
+   - Antes: solo el primer frame de un spin armaba undo; checkbox/combo no.
+   - Ahora: un undo por gesto (inicio de spin, checkbox, combo, step, soltar).
+
+Ya andaban (sin cambio): G/R/RR/N/C, delete, paste_clipboard push, height HUD commits,
+spline_grad_slider via ensure_grad_slider_undo, mirror grupal.

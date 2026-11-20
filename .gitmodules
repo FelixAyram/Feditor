@@ -1,0 +1,3 @@
+[submodule "third_party/openOMSI"]
+	path = third_party/openOMSI
+	url = https://github.com/openOMSI-org/openOMSI.git

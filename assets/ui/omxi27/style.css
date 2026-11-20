@@ -1,0 +1,13 @@
+html, body { margin: 0; height: 100%; font-family: "Segoe UI", system-ui, sans-serif; }
+.btn { padding: 8px 14px; border-radius: 6px; border: 1px solid #475569; background: #334155; color: #e2e8f0; cursor: pointer; font-size: 13px; }
+.btn:hover { background: #475569; }
+.btn-primary { background: #d97706; border-color: #d97706; color: #0f172a; font-weight: 600; }
+.btn-primary:hover { background: #f59e0b; }
+.btn-ghost { background: transparent; border-color: transparent; color: #94a3b8; }
+.btn-ghost:hover { background: rgba(255,255,255,.08); color: #e2e8f0; }
+.btn-ghost:focus-visible { outline: 2px solid #f59e0b; outline-offset: 1px; }
+.list-item { display: block; width: 100%; text-align: left; padding: 8px 10px; border: 0; background: transparent; color: #e2e8f0; cursor: pointer; font-size: 13px; }
+.list-item:hover { background: #1e293b; }
+.list-item.sel { background: #b45309; color: #fff; }
+.hud-panel { background: rgba(15,23,42,.82); border: 1px solid #334155; border-radius: 8px; padding: 8px 10px; font-size: 12px; line-height: 1.45; }
+.hud-h { font-size: 10px; text-transform: uppercase; color: #94a3b8; margin-bottom: 4px; letter-spacing: .04em; }

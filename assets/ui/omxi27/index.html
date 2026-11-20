@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="stylesheet" href="../shared/tw.css">
+  <link rel="stylesheet" href="style.css">
+  <title>omxi27 — Inicio</title>
+</head>
+<body class="h-full flex flex-col bg-slate-900 text-slate-100">
+  <header class="px-4 py-3 border-b border-slate-700 bg-slate-800 flex items-center justify-between">
+    <div>
+      <div class="text-xl font-bold tracking-wide text-amber-400">omxi27</div>
+      <div class="text-xs text-slate-400">Menú de inicio (paridad Tform_start) · español</div>
+    </div>
+    <div class="text-xs text-slate-500" id="omsi-root">OMSI root…</div>
+  </header>
+  <main class="flex-1 min-h-0 grid grid-cols-12 gap-3 p-3">
+    <section class="col-span-5 flex flex-col min-h-0 gap-2">
+      <h2 class="text-xs uppercase text-slate-400 font-semibold">Mapa</h2>
+      <div class="flex-1 min-h-0 border border-slate-700 rounded bg-slate-950 overflow-hidden flex flex-col">
+        <div class="px-2 py-1 text-[11px] text-slate-500 border-b border-slate-800 flex justify-between"><span>maps\*\global.cfg</span><span id="map-count">0</span></div>
+        <div class="overflow-y-auto flex-1" id="map-list"></div>
+      </div>
+      <div class="text-sm text-slate-300 min-h-[3rem]" id="map-info">Seleccionar un mapa</div>
+    </section>
+    <section class="col-span-4 flex flex-col min-h-0 gap-2">
+      <h2 class="text-xs uppercase text-slate-400 font-semibold">Situación</h2>
+      <div class="flex-1 min-h-0 border border-slate-700 rounded bg-slate-950 overflow-hidden flex flex-col">
+        <div class="px-2 py-1 text-[11px] text-slate-500 border-b border-slate-800">.osn / nueva</div>
+        <div class="overflow-y-auto flex-1" id="sit-list"></div>
+      </div>
+      <div class="flex gap-3 text-sm">
+        <label class="flex items-center gap-1"><input type="radio" name="mode" value="new" checked> Nueva</label>
+        <label class="flex items-center gap-1"><input type="radio" name="mode" value="load"> Cargar</label>
+        <label class="flex items-center gap-1"><input type="radio" name="mode" value="last"> Última</label>
+      </div>
+    </section>
+    <section class="col-span-3 flex flex-col min-h-0 gap-2">
+      <h2 class="text-xs uppercase text-slate-400 font-semibold">Entrypoints</h2>
+      <div class="flex-1 min-h-0 border border-slate-700 rounded bg-slate-950 overflow-hidden flex flex-col">
+        <div class="px-2 py-1 text-[11px] text-slate-500 border-b border-slate-800 flex justify-between"><span>global.cfg</span><span id="ep-count">0</span></div>
+        <div class="overflow-y-auto flex-1" id="ep-list"></div>
+      </div>
+      <p class="text-[11px] text-slate-500">Al iniciar: spawn en el entrypoint elegido (nombre duplicado → azar).</p>
+    </section>
+  </main>
+  <footer class="px-4 py-3 border-t border-slate-700 bg-slate-800 flex justify-between items-center gap-2">
+    <div class="text-xs text-slate-500" id="status">Listo</div>
+    <div class="flex gap-2">
+      <button type="button" class="btn btn-ghost" id="btn-options">Abrir opciones…</button>
+      <button type="button" class="btn btn-ghost" id="btn-quit">Salir</button>
+      <button type="button" class="btn btn-primary" id="btn-start">Iniciar</button>
+    </div>
+  </footer>
+  <script src="app.js"></script>
+</body>
+</html>
