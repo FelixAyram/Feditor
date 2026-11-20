@@ -427,7 +427,11 @@ struct Session::Impl {
         wsa = WSAStartup(MAKEWORD(2, 2), &wd) == 0;
         dir = app_dir();
         load_profile();
-        open_lan();
+        // (the LAN socket - and with it Windows' firewall question - only once the user agreed: give_network_consent)
+        {
+            std::error_code ec;
+            if (std::filesystem::exists(dir / "coop_network_ok.flag", ec)) open_lan();
+        }
         stop = false;
         net = std::thread([this] { net_loop(); });
     }
@@ -1778,6 +1782,19 @@ void Session::kick(int user_id) {
         p->closing = true;
         d_->sys_msg(p->name + " fue expulsado");
     }
+}
+bool Session::network_consent() {
+    std::lock_guard<std::recursive_mutex> lk(d_->mu);
+    std::error_code ec;
+    return std::filesystem::exists(d_->dir / "coop_network_ok.flag", ec);
+}
+void Session::give_network_consent() {
+    std::lock_guard<std::recursive_mutex> lk(d_->mu);
+    {
+        std::ofstream f(d_->dir / "coop_network_ok.flag", std::ios::trunc);
+        f << "1\n";
+    }
+    if (d_->udp_s == INVALID_SOCKET) d_->open_lan();
 }
 std::string Session::invite_code(const std::string& address) {
     std::lock_guard<std::recursive_mutex> lk(d_->mu);

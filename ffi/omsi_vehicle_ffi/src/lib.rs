@@ -656,6 +656,24 @@ pub extern "C" fn oo_body_matrix(bus: *mut OoBus, out16: *mut f32) -> i32 {
     })
 }
 
+/// Put the bus at (x, y, z) with `heading_deg`, standing (the editor carried it like an object). Its rigid
+/// body is placed there too and its trailers follow straight behind on the next step.
+#[unsafe(no_mangle)]
+pub extern "C" fn oo_teleport(bus: *mut OoBus, x: f64, y: f64, z: f64, heading_deg: f64) -> i32 {
+    with_bus(bus, 0, |b| {
+        b.v.position = DVec3::new(x, y, z);
+        b.v.heading = heading_deg;
+        b.v.set_speed(0.0);
+        if let Some(rb) = b.v.rigid.as_mut() {
+            rb.place(b.v.position, b.v.heading);
+        }
+        for t in b.v.trailers.iter_mut() {
+            t.realign();
+        }
+        1
+    })
+}
+
 /// Position (model origin) and heading / pitch / bank in degrees.
 #[unsafe(no_mangle)]
 pub extern "C" fn oo_pose(bus: *mut OoBus, out: *mut f64) -> i32 {

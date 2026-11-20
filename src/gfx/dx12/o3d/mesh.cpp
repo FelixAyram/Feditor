@@ -1247,8 +1247,19 @@ void HelloO3dRenderer::bind_proc_texture(GpuMeshChunk& chunk, MaterialDrawBatch&
             const D3D12_GPU_DESCRIPTOR_HANDLE dst_gpu = offset_gpu_handle(d.srv_heap_gpu, d.srv_stride, slot);
             try {
                 if (!try_reset_upload_allocator()) {
-                    batch.srv_gpu = white_srv_gpu;
+                    // every texture upload list in flight: white in its own slot for now, the texture goes into
+                    // that slot a few frames later (pump_late_textures) - it stayed white until "Recargar"
+                    d.device->CopyDescriptorsSimple(1, dst_cpu, white_srv_cpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                    d.device->CopyDescriptorsSimple(
+                        1,
+                        offset_cpu_handle(d.srv_heap->GetCPUDescriptorHandleForHeapStart(), d.srv_stride,
+                                          kCbvDescriptorCount + slot + 1),
+                        white_srv_cpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                    d.late_textures.push_back({slot, texture_path});
+                    batch.srv_gpu = dst_gpu;
                     batch.has_texture = true;
+                    batch.srv_slot = slot;
+                    d.texture_cache[key] = dst_gpu; // (the other strips with this texture share the slot)
                 } else {
                     throw_hr(d.upload_command_list->Reset(d.upload_allocator.Get(), nullptr), "proc tex cmd reset");
                     const auto tex =

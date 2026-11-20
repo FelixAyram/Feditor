@@ -136,6 +136,10 @@ public:
 
     // Main thread, once per frame.
     void update();
+    // The editor opens no socket (no Windows firewall question) until the user agreed, once: the LAN discovery
+    // socket opens then, and on every later start. host()/join() also open it.
+    [[nodiscard]] bool network_consent();
+    void give_network_consent();
 
     // ---- map edits ----
     void send_op(OpKind kind, std::int32_t id, const std::string& data);

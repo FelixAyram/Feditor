@@ -590,6 +590,7 @@ void apply_vista_kv(EditorUiSettings& s, const std::string& key, const std::stri
         }
     } else if (key == "show_sun_shadows") s.show_sun_shadows = parse_cfg_bool(val, s.show_sun_shadows);
     else if (key == "fog_enabled") s.fog_enabled = parse_cfg_bool(val, s.fog_enabled);
+    else if (key == "parked_cars_on") s.parked_cars_on = parse_cfg_bool(val, s.parked_cars_on);
     else if (key == "shadow_distance_m") {
         try {
             s.shadow_distance_m = std::stof(val);
@@ -674,6 +675,7 @@ bool write_editor_ui_cfg(const std::filesystem::path& path, const EditorUiSettin
     out << "weather_id=" << ui.weather_id << "\r\n";
     out << "show_sun_shadows=" << (ui.show_sun_shadows ? "1" : "0") << "\r\n";
     out << "fog_enabled=" << (ui.fog_enabled ? "1" : "0") << "\r\n";
+    out << "parked_cars_on=" << (ui.parked_cars_on ? "1" : "0") << "\r\n";
     out << "shadow_distance_m=" << ui.shadow_distance_m << "\r\n";
     out << "vsync=" << (ui.vsync ? "1" : "0") << "\r\n";
     out << "world_sound_enabled=" << (ui.world_sound_enabled ? "1" : "0") << "\r\n";
@@ -743,8 +745,14 @@ bool write_editor_ui_cfg(const std::filesystem::path& path, const EditorUiSettin
     return true;
 }
 
+// The interface language until the user picks one: Spanish when Windows is in Spanish, English otherwise.
+static int default_ui_language() {
+    return PRIMARYLANGID(GetUserDefaultUILanguage()) == LANG_SPANISH ? 0 : 1;
+}
+
 EditorUiSettings parse_editor_ui_doc(const cfg::CfgDocument& doc) {
     EditorUiSettings s{};
+    s.language = default_ui_language();
     if (doc.contains("[ui]") && !cfg::cfg_section(doc, "[ui]").empty()) {
         const auto& v = cfg::cfg_section(doc, "[ui]")[0];
         if (!v.empty()) {
@@ -901,7 +909,9 @@ EditorUiSettings load_editor_ui_settings(const std::filesystem::path& map_root) 
             return s;
         }
     }
-    return EditorUiSettings{};
+    EditorUiSettings first_run{};
+    first_run.language = default_ui_language();
+    return first_run;
 }
 
 bool save_editor_geo_settings(const std::filesystem::path& map_root, const EditorGeoSettings& s) {

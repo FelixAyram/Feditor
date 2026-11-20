@@ -781,6 +781,7 @@
     };
     // walk-edit: the object carried along the crosshair (its id), until a click places it
     std::int32_t walk_hold_id = 0;
+    bool walk_hold_bus = false; // walk-edit: the player's bus carried along the crosshair
     int walk_hold_pending = 0; // frames until the editor's click selection is read
     bool walk_skip_hold = false;
     bool walk_lmb_was = false, walk_rmb_was = false, walk_e_was = false;
@@ -897,18 +898,43 @@
             const bool over_ui = ImGui::GetIO().WantCaptureMouse;
             const bool lmb = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
             const bool rmb = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
-            if (lmb && !walk_lmb_was && !over_ui && walk_hold_id != 0) {
+            if (lmb && !walk_lmb_was && !over_ui && walk_hold_bus) {
+                walk_hold_bus = false; // the bus put down where it is
+                walk_skip_hold = true;
+                panel.set_status("Bus colocado");
+            } else if (lmb && !walk_lmb_was && !over_ui && walk_hold_id != 0) {
                 walk_hold_id = 0; // put down where it is
                 walk_skip_hold = true;
                 panel.set_status("Objeto colocado");
+            } else if (lmb && !walk_lmb_was && !over_ui && omsi_bus && omsi_bus->oo && !bus_drive_active) {
+                // the bus under the crosshair (it is no edit object): carried like one
+                static std::vector<std::size_t> s_bus_chunks;
+                s_bus_chunks.clear();
+                for (const auto ch : omsi_bus->chunks)
+                    if (ch != kNoChunk) s_bus_chunks.push_back(ch);
+                for (const auto ch : omsi_bus->sec_chunks)
+                    if (ch != kNoChunk) s_bus_chunks.push_back(ch);
+                float mxc = 0.f, myc = 0.f, fwc = 1.f, fhc = 1.f;
+                input::cursor_to_framebuffer(window, mxc, myc, fwc, fhc);
+                float wvp[16]{};
+                camera.build_world_view_proj(fhc > 0.f ? fwc / fhc : 1.6f, wvp);
+                float tb = 1e30f;
+                if (!s_bus_chunks.empty() &&
+                    renderer.pick_chunk(mxc, myc, static_cast<std::uint32_t>(fwc), static_cast<std::uint32_t>(fhc), wvp,
+                                        false, s_bus_chunks.data(), s_bus_chunks.size(), &tb)) {
+                    walk_hold_bus = true;
+                    walk_skip_hold = true; // (not the scenery behind it)
+                    panel.set_status("Llevando el bus: rueda = girar, click / click derecho = soltar");
+                }
             }
             if (!lmb && walk_lmb_was && !over_ui) {
                 if (!walk_skip_hold && edit_mode == EditMode::None) walk_hold_pending = 2;
                 walk_skip_hold = false;
             }
-            if (rmb && !walk_rmb_was && walk_hold_id != 0) {
+            if (rmb && !walk_rmb_was && (walk_hold_id != 0 || walk_hold_bus)) {
                 walk_hold_id = 0;
-                panel.set_status("Objeto soltado");
+                walk_hold_bus = false;
+                panel.set_status("Soltado");
             }
             walk_lmb_was = lmb;
             walk_rmb_was = rmb;
@@ -925,6 +951,12 @@
             if (walk_hold_id != 0)
                 for (const auto& sp : scene_places)
                     if (sp.alive && sp.object_id == walk_hold_id) excl.push_back(sp.chunk);
+            if (walk_hold_bus && omsi_bus) {
+                for (const auto ch : omsi_bus->chunks)
+                    if (ch != kNoChunk) excl.push_back(ch);
+                for (const auto ch : omsi_bus->sec_chunks)
+                    if (ch != kNoChunk) excl.push_back(ch);
+            }
             const float cpa = std::cos(walk.pitch);
             const float adx = std::sin(walk.yaw) * cpa, ady = std::cos(walk.yaw) * cpa, adz = std::sin(walk.pitch);
             const float aex = walk.x, aey = walk.y, aez = walk.z + 1.62f;
@@ -941,6 +973,18 @@
                 walk_aim[1] = aey + std::cos(walk.yaw) * kReach * (std::max)(cpa, 0.2f);
                 walk_aim[2] = coop_ground(walk_aim[0], walk_aim[1], aez + 50.f);
             }
+            if (walk_hold_bus && omsi_bus && omsi_bus->oo) {
+                // the bus stands where the crosshair meets the ground; the mouse wheel turns it
+                float hd = omsi_bus->heading_deg + ImGui::GetIO().MouseWheel * 5.f;
+                const float gz = coop_ground(walk_aim[0], walk_aim[1], walk_aim[2] + 3.f);
+                oo_teleport(omsi_bus->oo, walk_aim[0], walk_aim[1], gz, hd);
+                omsi_bus->x = walk_aim[0];
+                omsi_bus->y = walk_aim[1];
+                omsi_bus->z = gz;
+                omsi_bus->heading_deg = hd;
+            } else if (!omsi_bus) {
+                walk_hold_bus = false;
+            }
             if (walk_hold_id != 0) {
                 bool found = false;
                 for (auto& o : edit_objects)
@@ -953,6 +997,7 @@
             }
         } else {
             walk_hold_id = 0;
+            walk_hold_bus = false;
             walk_hold_pending = 0;
             walk_lmb_was = walk_rmb_was = false;
         }
@@ -992,7 +1037,54 @@
             static bool f7_was = false;
             const bool f7 = glfwGetKey(window, GLFW_KEY_F7) == GLFW_PRESS && !ImGui::GetIO().WantTextInput;
             auto& stp = panel.imgui_state();
-            if ((f7 && !f7_was) || stp.walk_toggle_request) {
+            // the bus: F7 while driving gets off when it stands (< 5 km/h); F7 next to it gets back in
+            auto bus_kmh = [&]() {
+                OoStatus bst{};
+                if (omsi_bus && omsi_bus->oo) oo_status(omsi_bus->oo, &bst);
+                return std::fabs(bst.speed_kmh);
+            };
+            auto near_bus = [&]() {
+                if (!omsi_bus) return false;
+                const auto& b = *omsi_bus;
+                const float h = b.heading_deg * 3.14159265f / 180.f;
+                const float dx = walk.x - b.x, dy = walk.y - b.y;
+                const float lx = dx * std::cos(h) - dy * std::sin(h);  // right
+                const float ly = dx * std::sin(h) + dy * std::cos(h) - b.doc.bbox_offset_y; // ahead
+                return std::fabs(lx) < b.doc.bbox_half_x + 2.5f && std::fabs(ly) < b.doc.bbox_half_y + 2.5f &&
+                       std::fabs(walk.z - b.z) < 4.f;
+            };
+            const bool f7_edge = (f7 && !f7_was) || stp.walk_toggle_request;
+            if (f7_edge && bus_drive_active && omsi_bus) {
+                stp.walk_toggle_request = false;
+                if (bus_kmh() >= 5.f) {
+                    panel.set_status("Detene el bus (menos de 5 km/h) para bajarte con F7");
+                } else {
+                    // get off on the right (the doors' side), next to the middle of the bus
+                    const auto& b = *omsi_bus;
+                    const float h = b.heading_deg * 3.14159265f / 180.f;
+                    const float side = b.doc.bbox_half_x + 0.9f;
+                    exit_bus_drive();
+                    coop_walk_enter();
+                    if (coop_walk_active) {
+                        walk.x = b.x + std::cos(h) * side + std::sin(h) * b.doc.bbox_offset_y;
+                        walk.y = b.y - std::sin(h) * side + std::cos(h) * b.doc.bbox_offset_y;
+                        walk.z = coop_ground(walk.x, walk.y, b.z + 3.f);
+                        walk.yaw = h - 1.5707963f; // facing the bus
+                        coop_walk_edit = true;
+                        panel.set_status("Bajaste del bus: F7 cerca del bus para volver a subir");
+                    }
+                }
+            } else if (f7_edge && coop_walk_active && !walk_hold_bus && near_bus()) {
+                stp.walk_toggle_request = false;
+                coop_walk_exit();
+                bus_drive_active = true;
+                camera.editor_nav = false;
+                bus_cam_mode = 1;
+                bus_cam_driver_idx = (std::max)(0, omsi_bus->doc.std_driver_camera_index);
+                bus_cam_need_snap = true;
+                apply_bus_camera(*omsi_bus);
+                panel.set_status("Subiste al bus (F7 con el bus detenido para bajar)");
+            } else if (f7_edge) {
                 // F7: walk-edit -> walk only -> off -> walk-edit ...
                 stp.walk_toggle_request = false;
                 if (!coop_walk_active) {
@@ -1280,6 +1372,9 @@
         char manual_addr[64]{};
         int addr_idx = 0;
         bool show_invite = false;
+        int share_mode = -1;     // invite code: -1 not chosen yet, 0 local network only, 1 online (internet)
+        bool intro_seen = false; // co-op intro shown this run
+        int intro_step = 0;      // 1 what co-op is, 2 the network permission
         bool friends_open = false;
         std::vector<std::string> dm_open; // friend guids with an open chat tab
         bool chat_min = false;            // chat widget minimized to its (blinking) bar
@@ -1379,7 +1474,9 @@
                     ImGui::InputInt("Puerto", &ui.port);
                     ui.port = std::clamp(ui.port, 1024, 65535);
                     ImGui::SameLine();
-                    if (ImGui::Button("Crear sala")) {
+                    // (without the network permission yet: the permission dialog first)
+                    if (ImGui::Button("Crear sala") && !coop.network_consent()) ui.intro_step = 2;
+                    else if (ImGui::IsItemClicked(ImGuiMouseButton_Left) && coop.network_consent()) {
                         std::filesystem::path live = cfg.workspace && !cfg.workspace->actual_dir.empty()
                                                          ? map::workspace_live_map_dir(*cfg.workspace)
                                                          : map::live_map_dir_from_folder(cfg.global.root);
@@ -1397,9 +1494,13 @@
                     ImGui::InputTextWithHint("##join", "F4-XXXX-XXXX-XXXX-XXXX", ui.join, sizeof(ui.join));
                     ImGui::SameLine();
                     if (ImGui::Button("Unirse")) {
-                        std::string err;
-                        if (!coop.join(ui.join, cfg.omsi_root, err)) ui.err = err;
-                        else ui.err.clear();
+                        if (!coop.network_consent()) {
+                            ui.intro_step = 2;
+                        } else {
+                            std::string err;
+                            if (!coop.join(ui.join, cfg.omsi_root, err)) ui.err = err;
+                            else ui.err.clear();
+                        }
                     }
                     const auto lan = coop.lan_peers();
                     bool any_room = false;
@@ -1463,39 +1564,58 @@
                     }
                     if (ui.show_invite && role == omsi::coop::Role::Host) {
                         ImGui::Separator();
-                        auto addrs = coop.local_addresses();
-                        addrs.push_back("(otra IP: VPN / publica)");
-                        ui.addr_idx = std::clamp(ui.addr_idx, 0, static_cast<int>(addrs.size()) - 1);
-                        ImGui::SetNextItemWidth(220.f);
-                        auto addr_label = [](const std::string& a) {
-                            if (a.rfind("tunel:", 0) == 0) return std::string("Internet (tunel Cloudflare)");
-                            return a;
-                        };
-                        if (ImGui::BeginCombo("Direccion", addr_label(addrs[static_cast<std::size_t>(ui.addr_idx)]).c_str())) {
-                            for (int i = 0; i < static_cast<int>(addrs.size()); ++i)
-                                if (ImGui::Selectable(addr_label(addrs[static_cast<std::size_t>(i)]).c_str(), i == ui.addr_idx))
-                                    ui.addr_idx = i;
-                            ImGui::EndCombo();
-                        }
-                        std::string addr = addrs[static_cast<std::size_t>(ui.addr_idx)];
-                        if (ui.addr_idx == static_cast<int>(addrs.size()) - 1) {
-                            ImGui::SameLine();
-                            ImGui::SetNextItemWidth(150.f);
-                            ImGui::InputTextWithHint("##maddr", "100.64.1.2", ui.manual_addr, sizeof(ui.manual_addr));
-                            addr = ui.manual_addr;
-                        }
-                        const std::string pub = coop.public_address();
-                        const std::string code = coop.invite_code(addr);
-                        if (addr.rfind("tunel:", 0) == 0)
-                            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.f), "Codigo para internet: funciona con cualquier router");
-                        else if (!pub.empty() && addr == pub)
-                            ImGui::TextColored(ImVec4(0.4f, 0.9f, 0.4f, 1.f), "Codigo para internet (IP publica)");
-                        else if (!pub.empty())
-                            ImGui::TextDisabled("Codigo para tu red local (para internet elegi %s)", pub.c_str());
-                        ImGui::Text("Codigo: %s", code.empty() ? "(direccion invalida)" : code.c_str());
+                        ImGui::TextUnformatted("Compartir codigo de acceso");
+                        if (ImGui::RadioButton("Solo red local", ui.share_mode == 0)) ui.share_mode = 0;
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Amigos en tu misma red (casa, LAN, VPN tipo Radmin / ZeroTier / Tailscale).");
                         ImGui::SameLine();
-                        if (!code.empty() && ImGui::SmallButton("Copiar")) ImGui::SetClipboardText(code.c_str());
-                        ImGui::TextDisabled("Puerto %u. Pasale el codigo a quien quieras invitar.", coop.port());
+                        if (ImGui::RadioButton("Online (internet)", ui.share_mode == 1)) ui.share_mode = 1;
+                        if (ImGui::IsItemHovered())
+                            ImGui::SetTooltip("Amigos en otras casas: un tunel seguro de Cloudflare, sin abrir puertos.");
+                        std::string code;
+                        bool waiting = false;
+                        const auto addrs = coop.local_addresses();
+                        if (ui.share_mode == 0) {
+                            // the first address of this PC on a private network (no tunnel, no public IP)
+                            for (const auto& a2 : addrs)
+                                if (a2.rfind("tunel:", 0) != 0 && a2 != coop.public_address()) {
+                                    code = coop.invite_code(a2);
+                                    break;
+                                }
+                            if (code.empty()) ImGui::TextDisabled("Sin red local: conectate a una red o elegi Online.");
+                        } else if (ui.share_mode == 1) {
+                            for (const auto& a2 : addrs)
+                                if (a2.rfind("tunel:", 0) == 0) {
+                                    code = coop.invite_code(a2);
+                                    break;
+                                }
+                            waiting = code.empty();
+                            if (waiting) {
+                                // a spinner while cloudflared is downloaded / the tunnel connects
+                                const float t = static_cast<float>(ImGui::GetTime());
+                                const ImVec2 pos = ImGui::GetCursorScreenPos();
+                                const ImVec2 ctr(pos.x + 9.f, pos.y + 9.f);
+                                ImDrawList* dl = ImGui::GetWindowDrawList();
+                                dl->PathArcTo(ctr, 7.f, t * 6.f, t * 6.f + 4.2f, 24);
+                                dl->PathStroke(IM_COL32(120, 200, 255, 255), 0, 2.5f);
+                                ImGui::Dummy(ImVec2(20.f, 18.f));
+                                ImGui::SameLine();
+                                const std::string inet = coop.internet_status();
+                                ImGui::TextWrapped("Preparando la conexion por internet...%s%s", inet.empty() ? "" : "\n",
+                                                   inet.c_str());
+                            }
+                        } else {
+                            ImGui::TextDisabled("Elegi si tus amigos estan en tu red local o por internet.");
+                        }
+                        if (!code.empty()) ImGui::Text("Codigo: %s", code.c_str());
+                        ImGui::BeginDisabled(code.empty()); // (no session / no code yet: nothing to copy)
+                        if (ImGui::Button("Copiar codigo") && !code.empty()) {
+                            ImGui::SetClipboardText(code.c_str());
+                            panel.set_status("Codigo copiado: pasaselo a tus amigos");
+                        }
+                        ImGui::EndDisabled();
+                        if (!code.empty())
+                            ImGui::TextDisabled("Pasale el codigo a quien quieras invitar (puerto %u).", coop.port());
                     }
                     ImGui::Separator();
                     // ---- users ----
@@ -1580,17 +1700,62 @@
             ui.profile_loaded = true;
         }
         const auto role = coop.role();
-        if (coop_walk_active) {
+        // (walk mode's controls and crosshair: map_editor_run_loop_04, one hint for every walk mode)
+
+        // Co-op mode: before Windows asks about its firewall, what co-op is and how to use it; then the
+        // permission it needs, and only on "Aceptar" the network opens (and Windows asks). Once a run until
+        // agreed; the editor waits on the dialog meanwhile.
+        if (!coop.network_consent() && (ui.intro_step > 0 || !ui.intro_seen)) {
+            if (ui.intro_step == 0) ui.intro_step = 1;
+            ui.intro_seen = true;
             const ImGuiViewport* vp = ImGui::GetMainViewport();
-            const char* hint = "Modo peaton  -  WASD caminar, Shift correr, Espacio saltar, mouse mirar  -  Esc / F7 salir";
-            const ImVec2 ts = ImGui::CalcTextSize(hint);
-            const ImVec2 p(vp->WorkPos.x + (vp->WorkSize.x - ts.x) * 0.5f, vp->WorkPos.y + vp->WorkSize.y - ts.y - 46.f);
-            ImDrawList* dl = ImGui::GetForegroundDrawList();
-            dl->AddRectFilled(ImVec2(p.x - 10, p.y - 6), ImVec2(p.x + ts.x + 10, p.y + ts.y + 6), IM_COL32(0, 0, 0, 150), 6.f);
-            dl->AddText(p, IM_COL32(255, 255, 255, 230), hint);
-            // crosshair
-            const ImVec2 c(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + vp->WorkSize.y * 0.5f);
-            dl->AddCircleFilled(c, 2.5f, IM_COL32(255, 255, 255, 200));
+            ImGui::GetForegroundDrawList()->AddRectFilled(vp->Pos, ImVec2(vp->Pos.x + vp->Size.x, vp->Pos.y + vp->Size.y),
+                                                          IM_COL32(0, 0, 0, 140));
+            ImGui::OpenPopup("##coop_intro");
+            ImGui::SetNextWindowPos(ImVec2(vp->Pos.x + vp->Size.x * 0.5f, vp->Pos.y + vp->Size.y * 0.5f), ImGuiCond_Always,
+                                    ImVec2(0.5f, 0.5f));
+            ImGui::SetNextWindowSize(ImVec2(520.f, 0.f));
+            if (ImGui::BeginPopupModal("##coop_intro", nullptr,
+                                       ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_AlwaysAutoResize)) {
+                if (ui.intro_step == 1) {
+                    ImGui::TextUnformatted("Modo cooperativo");
+                    ImGui::Separator();
+                    ImGui::TextWrapped("Este editor cuenta con modo cooperativo: construi un mapa junto a tus amigos, "
+                                       "cada uno en su PC, viendo en vivo lo que hacen los demas.");
+                    ImGui::Spacing();
+                    ImGui::TextWrapped("Como usarlo:");
+                    ImGui::BulletText("Panel lateral > pestana Sesion.");
+                    ImGui::BulletText("Anfitrion: \"Crear sala\" y despues \"Invitar\".");
+                    ImGui::BulletText("Elegi \"Solo red local\" (misma casa / LAN) u \"Online\" (por internet).");
+                    ImGui::BulletText("Copia el codigo y pasaselo a tus amigos.");
+                    ImGui::BulletText("Invitados: pegan el codigo en \"Unirse con un codigo\".");
+                    ImGui::Spacing();
+                    if (ImGui::Button("Continuar", ImVec2(140.f, 0.f))) ui.intro_step = 2;
+                    ImGui::SameLine();
+                    if (ImGui::Button("Ahora no", ImVec2(140.f, 0.f))) {
+                        ui.intro_step = 0;
+                        ImGui::CloseCurrentPopup();
+                    }
+                } else {
+                    ImGui::TextUnformatted("Permiso de red");
+                    ImGui::Separator();
+                    ImGui::TextWrapped("Para usar el modo cooperativo el editor necesita conectarse a la red "
+                                       "(tu red local y, si lo elegis, internet). Al aceptar, Windows te va a "
+                                       "preguntar si permitis el acceso a la red a este programa: elegi Permitir.");
+                    ImGui::Spacing();
+                    if (ImGui::Button("Aceptar", ImVec2(140.f, 0.f))) {
+                        coop.give_network_consent(); // (Windows' firewall question comes now)
+                        ui.intro_step = 0;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Ahora no", ImVec2(140.f, 0.f))) {
+                        ui.intro_step = 0;
+                        ImGui::CloseCurrentPopup();
+                    }
+                }
+                ImGui::EndPopup();
+            }
         }
 
         // name tags over the avatars

@@ -173,14 +173,13 @@
         return -1;
     };
     auto parked_frame = [&]() {
-        renderer.set_show_editor_helpers(panel.imgui_state().show_carpark_helpers);
         static const int env = [] {
             const char* e = std::getenv("OMSI_PARKED");
             return e && *e ? std::atoi(e) : -1;
         }();
-        // ("Show carpark" shows the spaces' plain helper boxes instead of the cars standing in them)
-        const bool on = (env >= 0 ? env > 0 : panel.imgui_state().parked_cars_on) &&
-                        !panel.imgui_state().show_carpark_helpers;
+        // one option, "Car park real": the real parked cars, or (off) the spaces' plain helper boxes
+        const bool on = env >= 0 ? env > 0 : panel.imgui_state().parked_cars_on;
+        renderer.set_show_editor_helpers(!on);
         if (!on) {
             if (!parked_cars.empty() || !parked_none.empty()) parked_release_all();
             return;

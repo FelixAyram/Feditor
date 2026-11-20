@@ -113,7 +113,7 @@ struct EditorUiSettings {
     int editor_tile_radius = 1;
     float editor_visual_radius_m = 300.f;
     /// Objects (.sco/.sli chunks) whose projected size is below this % of screen height are not drawn. 0 = off.
-    float min_screen_size_pct = 6.f;
+    float min_screen_size_pct = 0.6f; // (default 0.6 %: 6 % hid far too much)
     float union_ball_screen_pct = 0.02f;
     float grad_circle_screen_pct = 0.01f;
     bool tex_max_256 = false;
@@ -139,6 +139,7 @@ struct EditorUiSettings {
     int weather_id = 0;
     bool show_sun_shadows = true;
     bool fog_enabled = true;          // Vista > Graficos > Niebla
+    bool parked_cars_on = true;       // Vista > Car park real (off: the helper boxes)
     float shadow_distance_m = 0.f;    // Vista > Graficos > Distancia de sombras (0 = the visual radius)
     bool vsync = true; // monitor vertical sync (Present interval 1); saved with the other editor prefs
     std::uint32_t shadow_map_size = 4096;

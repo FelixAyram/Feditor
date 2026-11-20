@@ -39,6 +39,7 @@ size_t oo_traffic_stats(OoTraffic*, char*, size_t) { return 0; }
 void oo_traffic_set_bus(OoTraffic*, OoBus*) {}
 float oo_traffic_car_var(OoTraffic*, int32_t, const char*, float f) { return f; }
 int32_t oo_traffic_remove_car(OoTraffic*, uint64_t) { return 0; }
+int32_t oo_teleport(OoBus*, double, double, double, double) { return 0; }
 size_t oo_traffic_lamps(OoTraffic*, double, double, double, float*, size_t) { return 0; }
 size_t oo_bus_lamps(OoBus*, float*, size_t) { return 0; }
 size_t oo_traffic_bodies(OoTraffic*, float*, size_t) { return 0; }

@@ -676,12 +676,12 @@ struct EditorSidePanelImGuiState {
     bool options_draft_vsync = false; // monitor vertical sync (Present interval 1)
     int options_draft_tile_radius = 1;
     int options_draft_visual_m = 300;
-    float options_draft_min_screen_pct = 6.f;
+    float options_draft_min_screen_pct = 0.6f;
     float options_draft_union_pct = 0.02f;
     float options_draft_grad_pct = 0.01f;
     int options_snap_tile_radius = 1;
     int options_snap_visual_m = 300;
-    float options_snap_min_screen_pct = 6.f;
+    float options_snap_min_screen_pct = 0.6f;
     float options_snap_union_pct = 0.02f;
     float options_snap_grad_pct = 0.01f;
     bool options_snap_vsync = true;

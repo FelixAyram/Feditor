@@ -50,6 +50,8 @@ void oo_tick(OoBus* bus, float dt, float listener_x, float listener_y, float lis
              float fwd_z);
 int32_t oo_body_matrix(OoBus* bus, float* out16); /* DirectXMath row-vector matrix, row-major */
 int32_t oo_pose(OoBus* bus, double* out6);        /* x y z heading pitch bank */
+/* puts the bus at x y z / heading, standing (carried like an object in the editor) */
+int32_t oo_teleport(OoBus* bus, double x, double y, double z, double heading_deg);
 int32_t oo_var_slot(OoBus* bus, const char* name);
 float oo_var_at(OoBus* bus, int32_t slot);
 float oo_var(OoBus* bus, const char* name, float fallback);

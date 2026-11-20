@@ -3446,8 +3446,8 @@ void draw_options_editor(const MapEditorImGuiArgs& args) {
 
     ImGui::SeparatorText(i18n::tr_lit("Dibujo (se aplica al instante)"));
     row_label(i18n::tr_lit("Tamano min. en pantalla"));
-    if (ImGui::SliderFloat("##opt_min_scr", &st.options_draft_min_screen_pct, 0.f, 20.f,
-                           st.options_draft_min_screen_pct <= 0.f ? "desactivado" : "%.1f %%"))
+    if (ImGui::SliderFloat("##opt_min_scr", &st.options_draft_min_screen_pct, 0.f, 5.f,
+                           st.options_draft_min_screen_pct <= 0.f ? "desactivado" : "%.2f %%"))
         apply_live();
     if (ImGui::IsItemDeactivatedAfterEdit()) save_ui_prefs_now(args);
     if (ImGui::IsItemHovered())
@@ -4936,11 +4936,10 @@ void build_map_editor_imgui_ui(const MapEditorImGuiArgs& args) {
                                                      &st.hide_onlyeditor_splines);
                     vista_changed |= ImGui::MenuItem(i18n::tr_lit("Punto en el origen del .sco seleccionado"), nullptr,
                                                      &st.show_sco_origin);
-                    vista_changed |= ImGui::MenuItem(i18n::tr_lit("Cajas de estacionamientos (carpark)"), nullptr,
-                                                     &st.show_carpark_helpers);
+                    vista_changed |= ImGui::MenuItem(i18n::tr_lit("Car park real"), nullptr, &st.parked_cars_on);
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s", i18n::tr_lit("Las cajas de ayuda de los [carpark_p] y entrypoints "
-                                                             "(en lugar de los autos estacionados)."));
+                        ImGui::SetTooltip("%s", i18n::tr_lit("Activado: un auto real de la parklist en cada [carpark_p], "
+                                                             "como OMSI. Desactivado: las cajas comunes del editor."));
                     ImGui::EndMenu();
                 }
                 if (ImGui::BeginMenu(i18n::tr_lit("Cielo y tiempo"))) {
@@ -5049,10 +5048,10 @@ void build_map_editor_imgui_ui(const MapEditorImGuiArgs& args) {
                                                              "autos reales con sus scripts y animaciones, semaforos y prioridades."));
                     ImGui::SetNextItemWidth(180.f);
                     ImGui::SliderInt("##ai_cars", &st.ai_traffic_cars, 5, 400, "%d autos");
-                    ImGui::Checkbox(i18n::tr_lit("Autos estacionados"), &st.parked_cars_on);
+                    vista_changed |= ImGui::Checkbox(i18n::tr_lit("Car park real"), &st.parked_cars_on);
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s", i18n::tr_lit("Un auto de la parklist del mapa en cada estacionamiento [carpark_p], "
-                                                             "como OMSI (un cuarto quedan libres)."));
+                        ImGui::SetTooltip("%s", i18n::tr_lit("Activado: un auto real de la parklist en cada [carpark_p], "
+                                                             "como OMSI. Desactivado: las cajas comunes del editor."));
                     ImGui::EndMenu();
                 }
                 if (vista_changed) {

@@ -3534,10 +3534,12 @@
                             ? "PEATON  |  WASD caminar  Shift correr  Espacio saltar  mouse mirar  E cursor  F7 salir  Esc salir"
                         : coop_walk_cursor
                             ? "PEATON EDITOR (cursor)  |  usa la interfaz con el mouse  WASD caminar  E volver a mirar  F7 solo peaton"
+                        : walk_hold_bus
+                            ? "LLEVANDO EL BUS  |  apunta donde va  rueda girar  click / click derecho soltar"
                         : walk_hold_id != 0
                             ? "LLEVANDO OBJETO  |  apunta donde va  click / click derecho soltar  Supr borrar  R rotar  Ctrl+Z deshacer"
-                            : "PEATON EDITOR  |  click seleccionar y llevar  click derecho soltar  Supr borrar  N crear en la mira  "
-                              "E cursor  F7 solo peaton";
+                            : "PEATON EDITOR  |  click seleccionar y llevar (tambien el bus)  click derecho soltar  Supr borrar  "
+                              "N crear  E cursor  F7 solo peaton / subir al bus";
                     const ImVec2 ts = ImGui::CalcTextSize(hint);
                     const ImVec2 tp(c.x - ts.x * 0.5f, vp->Pos.y + vp->Size.y - 120.f);
                     fg->AddRectFilled(ImVec2(tp.x - 10.f, tp.y - 5.f), ImVec2(tp.x + ts.x + 10.f, tp.y + ts.y + 5.f),
