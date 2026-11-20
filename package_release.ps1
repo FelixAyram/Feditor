@@ -14,6 +14,8 @@ foreach ($d in "assets", "tools", "shaders") {
     $p = Join-Path $BuildDir $d
     if (Test-Path $p) { Copy-Item $p -Destination (Join-Path $stage $d) -Recurse }
 }
+# the source tree's assets too (editor sounds, UI fonts): the build only deploys the spline tool icons
+Copy-Item "assets\*" -Destination (Join-Path $stage "assets") -Recurse -Force
 Copy-Item LICENSE, NOTICE.md, README.md -Destination $stage
 New-Item -ItemType Directory -Path dist -Force | Out-Null
 $zip = "dist\Feditor-$ver.zip"
