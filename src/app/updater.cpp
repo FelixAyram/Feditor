@@ -108,6 +108,43 @@ bool http_get(const std::string& url, std::string* body_out, const std::filesyst
     return ok;
 }
 
+// The latest release's tag without GitHub's API (60 requests / hour per IP when not signed in: a shared IP
+// - CGNAT, a school, a cyber - runs out): github.com/<repo>/releases/latest answers with a redirect to
+// .../releases/tag/<tag>; the redirect is not followed, its Location read.
+std::string latest_tag_from_web() {
+    HINTERNET ses = WinHttpOpen(L"Feditor-updater", WINHTTP_ACCESS_TYPE_AUTOMATIC_PROXY, WINHTTP_NO_PROXY_NAME,
+                                WINHTTP_NO_PROXY_BYPASS, 0);
+    if (!ses) return {};
+    std::string tag;
+    HINTERNET con = WinHttpConnect(ses, L"github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
+    const std::wstring path = L"/" + widen(kRepo) + L"/releases/latest";
+    HINTERNET req = con ? WinHttpOpenRequest(con, L"GET", path.c_str(), nullptr, WINHTTP_NO_REFERER,
+                                             WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE)
+                        : nullptr;
+    if (req) {
+        DWORD no_redirect = WINHTTP_DISABLE_REDIRECTS;
+        WinHttpSetOption(req, WINHTTP_OPTION_DISABLE_FEATURE, &no_redirect, sizeof(no_redirect));
+        if (WinHttpSendRequest(req, WINHTTP_NO_ADDITIONAL_HEADERS, 0, WINHTTP_NO_REQUEST_DATA, 0, 0, 0) &&
+            WinHttpReceiveResponse(req, nullptr)) {
+            wchar_t loc[2048]{};
+            DWORD sz = sizeof(loc);
+            if (WinHttpQueryHeaders(req, WINHTTP_QUERY_LOCATION, WINHTTP_HEADER_NAME_BY_INDEX, loc, &sz,
+                                    WINHTTP_NO_HEADER_INDEX)) {
+                const std::wstring l(loc);
+                const auto at = l.rfind(L"/tag/");
+                if (at != std::wstring::npos)
+                    for (const wchar_t ch : l.substr(at + 5))
+                        if (ch < 128 && ch > 32 && ch != L'/' && ch != L'?' && ch != L'#') tag += static_cast<char>(ch);
+                        else break;
+            }
+        }
+        WinHttpCloseHandle(req);
+    }
+    if (con) WinHttpCloseHandle(con);
+    WinHttpCloseHandle(ses);
+    return tag;
+}
+
 // the string value of "key": "..." after position `from` (JSON escapes \" \\ \n handled)
 std::string json_str(const std::string& j, const std::string& key, std::size_t from = 0, std::size_t* at = nullptr) {
     const std::string k = "\"" + key + "\"";
@@ -187,11 +224,22 @@ void start_check() {
     std::thread([] {
         std::string body;
         const std::string url = std::string("https://api.github.com/repos/") + kRepo + "/releases/latest";
-        if (!http_get(url, &body, nullptr) || body.empty()) {
-            set_state(State::Failed, "no se pudo consultar GitHub");
-            return;
+        std::string tag;
+        if (http_get(url, &body, nullptr) && !body.empty()) tag = json_str(body, "tag_name");
+        if (tag.empty()) {
+            // (the API refused - rate limit - or is unreachable: the release page's redirect, and the zip by its
+            // fixed name, as package_release.ps1 uploads it)
+            body.clear();
+            tag = latest_tag_from_web();
+            if (tag.empty()) {
+                log::warn("updater: could not reach GitHub");
+                set_state(State::Failed, "no se pudo consultar GitHub");
+                return;
+            }
+            const std::string v = (tag[0] == 'v' || tag[0] == 'V') ? tag.substr(1) : tag;
+            body = "{\"browser_download_url\": \"https://github.com/" + std::string(kRepo) + "/releases/download/" + tag +
+                   "/Feditor-" + v + ".zip\"}";
         }
-        const std::string tag = json_str(body, "tag_name");
         // the release's zip (the first .zip asset)
         std::string zip;
         std::size_t pos = 0;
