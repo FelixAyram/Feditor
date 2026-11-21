@@ -113,7 +113,7 @@ struct EditorUiSettings {
     int editor_tile_radius = 1;
     float editor_visual_radius_m = 300.f;
     /// Objects (.sco/.sli chunks) whose projected size is below this % of screen height are not drawn. 0 = off.
-    float min_screen_size_pct = 0.6f; // (default 0.6 %: 6 % hid far too much)
+    float min_screen_size_pct = 0.f; // (default 0: nothing culled by screen size)
     float union_ball_screen_pct = 0.02f;
     float grad_circle_screen_pct = 0.01f;
     bool tex_max_256 = false;

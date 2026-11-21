@@ -170,8 +170,8 @@ Todos necesitan el mismo mapa y los mismos objetos en su OMSI 2 (usá **Empaquet
 En *Vista → Gráficos* y *Herramientas → Opciones editor…*:
 
 - **Distancia de tiles**: 1–2 tiles alcanza para editar; 3–4 para recorrer.
-- **Tamaño mínimo en pantalla** (por defecto 0,6 %): subilo para que no se dibujen objetos chiquitos
-  lejanos.
+- **Tamaño mínimo en pantalla** (por defecto 0 %, se dibuja todo): subilo (por ejemplo a 0,5 %) para
+  que no se dibujen objetos chiquitos lejanos.
 - **Distancia de sombras**: bajala si la GPU no da más; **Sombras solares (CSM)** se pueden apagar.
 - **Límite de texturas 256 px** para placas con poca VRAM.
 - **Tráfico IA**: menos autos = más fps.

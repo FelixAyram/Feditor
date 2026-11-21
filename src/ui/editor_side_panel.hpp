@@ -681,7 +681,7 @@ struct EditorSidePanelImGuiState {
     float options_draft_grad_pct = 0.01f;
     int options_snap_tile_radius = 1;
     int options_snap_visual_m = 300;
-    float options_snap_min_screen_pct = 0.6f;
+    float options_snap_min_screen_pct = 0.f;
     float options_snap_union_pct = 0.02f;
     float options_snap_grad_pct = 0.01f;
     bool options_snap_vsync = true;

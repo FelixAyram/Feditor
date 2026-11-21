@@ -486,6 +486,8 @@ void apply_vista_kv(EditorUiSettings& s, const std::string& key, const std::stri
     } else if (key == "min_screen_pct") {
         try {
             s.min_screen_size_pct = std::stof(val);
+            // (0.6 was the default of 0.65 / 0.66, saved by every run: back to the new default 0)
+            if (std::fabs(s.min_screen_size_pct - 0.6f) < 1e-4f) s.min_screen_size_pct = 0.f;
         } catch (...) {
         }
     } else if (key == "visual_radius_m") {
