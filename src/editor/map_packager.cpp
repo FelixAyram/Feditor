@@ -271,7 +271,10 @@ fs::path steam_root_dir() {
 // Runs tools\map_dependency_scanner\f4_pack_scan.py (the Python scanner) and writes its TSV.
 bool run_python_scan(const PackOptions& opt, PackProgress& pr, const fs::path& tsv, std::string& err) {
     const fs::path script = opt.scanner_dir / "f4_pack_scan.py";
-    if (opt.scanner_dir.empty() || !exists_file(script)) {
+    // the release ships the scanner frozen (PyInstaller): no Python needed on the user's PC
+    const fs::path bundled = opt.scanner_dir / "f4_pack_scan" / "f4_pack_scan.exe";
+    const bool use_bundled = !opt.scanner_dir.empty() && exists_file(bundled);
+    if (!use_bundled && (opt.scanner_dir.empty() || !exists_file(script))) {
         err = "no se encontro f4_pack_scan.py";
         return false;
     }
@@ -286,16 +289,21 @@ bool run_python_scan(const PackOptions& opt, PackProgress& pr, const fs::path& t
         if (low.find(L"\\windowsapps\\") != std::wstring::npos) return {};
         return p;
     };
-    std::wstring py = find_exe(L"py.exe");
-    std::wstring args;
-    if (!py.empty()) args = L" -3";
-    else py = find_exe(L"python.exe");
-    if (py.empty()) {
-        err = "Python no esta instalado";
-        return false;
-    }
     auto q = [](const fs::path& p) { return L"\"" + p.wstring() + L"\""; };
-    std::wstring cmd = L"\"" + py + L"\"" + args + L" " + q(script) + L" --omsi-root " + q(opt.omsi_root) +
+    std::wstring py, args;
+    if (use_bundled) {
+        py = bundled.wstring();
+    } else {
+        py = find_exe(L"py.exe");
+        if (!py.empty()) args = L" -3";
+        else py = find_exe(L"python.exe");
+        if (py.empty()) {
+            err = "Python no esta instalado";
+            return false;
+        }
+        args += L" " + q(script);
+    }
+    std::wstring cmd = L"\"" + py + L"\"" + args + L" --omsi-root " + q(opt.omsi_root) +
                        L" --map " + q(opt.global_cfg) + L" -o " + q(tsv);
     if (!opt.ai_vehicles) cmd += L" --no-ai-buses";
     SECURITY_ATTRIBUTES sa{sizeof(sa), nullptr, TRUE};

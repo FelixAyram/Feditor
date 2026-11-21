@@ -134,15 +134,26 @@ bool find_python_exe(std::wstring& out) {
     return false;
 }
 
+// The release ships the spline creator frozen (PyInstaller): tools\spline_creator\spline_creator.exe next to
+// the editor, so the user's PC needs no Python.
+std::filesystem::path bundled_spline_creator_exe() {
+    wchar_t mod[MAX_PATH]{};
+    if (!GetModuleFileNameW(nullptr, mod, MAX_PATH)) return {};
+    const auto exe = std::filesystem::path(mod).parent_path() / "tools" / "spline_creator" / "spline_creator.exe";
+    std::error_code ec;
+    return std::filesystem::exists(exe, ec) ? exe : std::filesystem::path{};
+}
+
 SplineCreatorLaunchResult launch_python_spline_creator(const SplineCreatorCli& cli, void* owner_hwnd) {
     SplineCreatorLaunchResult r{};
-    const auto script = python_spline_creator_script();
+    const auto frozen = bundled_spline_creator_exe();
+    const auto script = frozen.empty() ? python_spline_creator_script() : frozen;
     if (script.empty()) {
         log::warn("spline creator python: no se encontró tools/spline_creator/app.py");
         return r;
     }
     std::wstring py;
-    if (!find_python_exe(py)) {
+    if (frozen.empty() && !find_python_exe(py)) {
         log::warn("spline creator python: no hay py.exe / python.exe en PATH");
         return r;
     }
@@ -152,10 +163,15 @@ SplineCreatorLaunchResult launch_python_spline_creator(const SplineCreatorCli& c
     std::error_code ec;
     std::filesystem::remove(status, ec);
 
-    const auto py_name = std::filesystem::path(py).filename().wstring();
-    std::wstring cmd = quote_arg(py);
-    if (_wcsicmp(py_name.c_str(), L"py.exe") == 0) cmd += L" -3";
-    cmd += L" -u " + quote_arg(script);
+    std::wstring cmd;
+    if (!frozen.empty()) {
+        cmd = quote_arg(frozen);
+    } else {
+        const auto py_name = std::filesystem::path(py).filename().wstring();
+        cmd = quote_arg(py);
+        if (_wcsicmp(py_name.c_str(), L"py.exe") == 0) cmd += L" -3";
+        cmd += L" -u " + quote_arg(script);
+    }
     if (!cli.omsi_root.empty()) cmd += L" --omsi " + quote_arg(cli.omsi_root);
     if (!cli.open_sli.empty()) cmd += L" --sli " + quote_arg(cli.open_sli);
     cmd += L" --status-file " + quote_arg(status);

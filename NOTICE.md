@@ -28,6 +28,18 @@ openOMSI repository at the pinned submodule commit.
 | ECC (`third_party/ECC`) | MIT |
 | Ultralight (optional, `OMSI_ULTRALIGHT_ROOT`) | Proprietary — **not** AGPL-compatible: release builds must be built without it |
 
+### Bundled in the release zip (so nothing else has to be installed)
+
+| Component | Licence |
+|---|---|
+| Microsoft Visual C++ runtime (`msvcp140*.dll`, `vcruntime140*.dll`) | Microsoft Visual Studio redistributable files |
+| Python 3 runtime (frozen tools in `tools\`) | PSF License |
+| PyInstaller bootloader | GPL-2.0 with the PyInstaller bootloader exception |
+| pygame / SDL2 | LGPL-2.1 / zlib |
+| moderngl, glcontext | MIT |
+| Pillow | MIT-CMU (HPND) |
+| Tcl/Tk | Tcl/Tk license (BSD-style) |
+
 ## Not part of this program
 
 OMSI 2 and its content are © MR Software / Aerosoft and are required separately; no OMSI 2 files
