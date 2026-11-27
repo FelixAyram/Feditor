@@ -174,27 +174,38 @@
         return -1;
     };
     // helper boxes shown for one frame because their space is hovered / selected (restored every frame)
-    std::vector<std::pair<std::size_t, std::int32_t>> parked_revealed; // (chunk, space id)
+    struct ParkedRevealed {
+        std::size_t chunk = 0;
+        std::int32_t oid = 0;
+        std::uint8_t kinds = 0; // its helper kinds, put back next frame
+    };
+    std::vector<ParkedRevealed> parked_revealed;
+    std::uint8_t parked_helper_mask = 0xFF; // helper kinds shown this frame (renderer kEditorHelper*)
     parked_hot_hook = [&](std::int32_t oid, float amt, float r, float g, float b) {
         if (const auto it = parked_cars.find(oid); it != parked_cars.end()) {
             for (const auto ch : it->second.chunks) renderer.set_chunk_highlight(ch, amt, r, g, b);
             return;
         }
-        // no car on it and the boxes hidden: show this space's box so the hover / selection colour is seen
-        if (!parked_helpers_hidden) return;
+        // no car on it and its helper box hidden (carpark box / [onlyeditor] object): shown while hovered /
+        // selected so the hover / selection colour is seen
+        if (parked_helper_mask == 0xFF) return;
+        // (only hidden helpers themselves: every hovered object comes through here, and an ordinary one put on
+        //  this list was marked a helper on the next frame - it vanished while Show carpark was off)
         for (const auto& sp : scene_places) {
             if (!sp.alive || sp.object_id != oid) continue;
-            renderer.set_chunk_editor_helper(sp.chunk, false);
+            const std::uint8_t kinds = renderer.chunk_editor_helper(sp.chunk);
+            if (!(kinds & ~parked_helper_mask)) continue;
+            renderer.set_chunk_editor_helper(sp.chunk, 0);
             renderer.set_chunk_highlight(sp.chunk, amt, r, g, b);
-            parked_revealed.emplace_back(sp.chunk, oid);
+            parked_revealed.push_back({sp.chunk, oid, kinds});
         }
     };
     auto parked_frame = [&]() {
         // (only chunks still that space's mesh: a released chunk index may hold another mesh by now)
-        for (const auto& [ch, oid] : parked_revealed)
+        for (const auto& rv : parked_revealed)
             for (const auto& sp : scene_places)
-                if (sp.chunk == ch && sp.object_id == oid && sp.alive) {
-                    renderer.set_chunk_editor_helper(ch, true);
+                if (sp.chunk == rv.chunk && sp.object_id == rv.oid && sp.alive) {
+                    renderer.set_chunk_editor_helper(rv.chunk, rv.kinds);
                     break;
                 }
         parked_revealed.clear();
@@ -204,9 +215,12 @@
         }();
         // one option, "Car park real": the real parked cars, or (off) the spaces' plain helper boxes
         const bool on = env >= 0 ? env > 0 : panel.imgui_state().parked_cars_on;
-        // Vista > Show carpark keeps the boxes on next to the real cars
+        // Vista > Show carpark keeps the boxes on next to the real cars; Vista > Objetos onlyeditor shows or hides
+        // every [onlyeditor] object and entrypoint (the real parked cars are not helpers: never hidden by it)
         parked_helpers_hidden = on && !panel.imgui_state().show_carpark_helpers;
-        renderer.set_show_editor_helpers(!parked_helpers_hidden);
+        parked_helper_mask = static_cast<std::uint8_t>(0xFF & ~(parked_helpers_hidden ? 2u : 0u) &
+                                                       ~(panel.imgui_state().show_onlyeditor_objects ? 0u : 1u));
+        renderer.set_editor_helper_mask(parked_helper_mask);
         if (!on) {
             if (!parked_cars.empty() || !parked_none.empty()) parked_release_all();
             return;

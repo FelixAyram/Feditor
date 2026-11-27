@@ -141,6 +141,7 @@ struct EditorUiSettings {
     bool shaft_plus = false;          // light shafts: false = Normal (cheap), true = Plus (more steps, stronger)
     bool fog_enabled = true;          // Vista > Graficos > Niebla
     bool parked_cars_on = true;       // Vista > Car park real (off: the helper boxes)
+    bool show_onlyeditor_objects = true; // Vista > Objetos onlyeditor ([onlyeditor] .sco, entrypoints)
     float shadow_distance_m = 0.f;    // Vista > Graficos > Distancia de sombras (0 = the visual radius)
     bool vsync = true; // monitor vertical sync (Present interval 1); saved with the other editor prefs
     std::uint32_t shadow_map_size = 4096;

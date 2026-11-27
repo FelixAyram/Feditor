@@ -1300,6 +1300,14 @@
         protos.insert_or_assign(key, chunk);
         gpu_proto_chunks.insert(chunk);
     };
+    // Editor helper kinds of a .sco's meshes (renderer kEditorHelper*): 1 = [onlyeditor] / entrypoint (Vista >
+    // Objetos onlyeditor), 2 = carpark box (hidden under the real parked cars unless Vista > Show carpark).
+    auto sco_helper_kinds = [](const sco::SceneryObject& s) -> std::uint8_t {
+        std::uint8_t k = 0;
+        if (s.only_editor_mesh || s.special == sco::ScoSpecial::EntryPoint) k |= 1u;
+        if (s.special == sco::ScoSpecial::Carpark) k |= 2u;
+        return k;
+    };
     auto o3d_path_key = [](const std::filesystem::path& p) {
         auto s = p.lexically_normal().string();
         for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
@@ -1414,8 +1422,7 @@
             renderer.set_chunk_visible(chunk, true);
             apply_sco_draw_phase(chunk, x_paint ? sco::ScoRenderPriority::Surface : sco.render_priority,
                                  sco.surface || x_paint);
-            if (sco.special == sco::ScoSpecial::EntryPoint || sco.special == sco::ScoSpecial::Carpark)
-                renderer.set_chunk_editor_helper(chunk, true);
+            if (const auto hk = sco_helper_kinds(sco)) renderer.set_chunk_editor_helper(chunk, hk);
             ScenePlace sp{};
             sp.object_id = inst_id;
             sp.chunk = chunk;
@@ -1541,8 +1548,7 @@
                     const bool paint = sco_paint_at_foot(sco);
                     apply_sco_draw_phase(chunk, paint ? sco::ScoRenderPriority::Surface : sco.render_priority,
                                          sco.surface || paint);
-                    if (sco.special == sco::ScoSpecial::EntryPoint || sco.special == sco::ScoSpecial::Carpark)
-                        renderer.set_chunk_editor_helper(chunk, true);
+                    if (const auto hk = sco_helper_kinds(sco)) renderer.set_chunk_editor_helper(chunk, hk);
                 }
                 ScenePlace sp{};
                 sp.object_id = inst_id;
@@ -1638,8 +1644,7 @@
                 const bool paint = sco_paint_at_foot(*sco);
                 apply_sco_draw_phase(chunk, paint ? sco::ScoRenderPriority::Surface : sco->render_priority,
                                      sco->surface || paint);
-                if (sco->special == sco::ScoSpecial::EntryPoint || sco->special == sco::ScoSpecial::Carpark)
-                    renderer.set_chunk_editor_helper(chunk, true);
+                if (const auto hk = sco_helper_kinds(*sco)) renderer.set_chunk_editor_helper(chunk, hk);
             }
             else if (matl && matl->presurface)
                 renderer.set_chunk_presurface(chunk, true);
@@ -3230,7 +3235,7 @@
             const auto tile = world::find_tile_at_world(cfg.global, e.world_x, e.world_y);
             const bool show = tile && world.has_tile(tile->grid_x, tile->grid_y);
             e.visible = show;
-            renderer.set_chunk_editor_helper(e.chunk, true); // (Vista > Show carpark hides them too)
+            renderer.set_chunk_editor_helper(e.chunk, 1u); // (Vista > Objetos onlyeditor hides them)
             renderer.set_chunk_visible(e.chunk, show);
         }
     };

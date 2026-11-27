@@ -30,6 +30,11 @@ Dx12Texture load_texture_wic(ID3D12Device* device, ID3D12GraphicsCommandList* cm
         return texture_detail::upload_rgba_mip_chain(device, cmd_list, srv_cpu, srv_gpu, *cached);
     }
     if (!texture_detail::path_exists(path)) return out;
+    // (a 32-bit BMP keeps its alpha, as D3DX reads it: WIC would make it opaque)
+    if (!is_virtual_path(path) && texture_detail::sniff_texture_format(path) == texture_detail::TexFormat::bmp)
+        if (const auto img = texture_detail::load_bmp32_alpha_cpu(path))
+            return texture_detail::upload_rgba_texture(device, cmd_list, srv_cpu, srv_gpu, img->rgba.data(), img->width,
+                                                       img->height, img->width * 4u);
 
     // WIC needs COM on this thread (editor uploads after init may ride a different apartment).
     (void)CoInitializeEx(nullptr, COINIT_MULTITHREADED);

@@ -106,6 +106,10 @@ size_t oo_traffic_car_paint(OoTraffic* t, int32_t i, int32_t k, char* buf, size_
 size_t oo_traffic_stats(OoTraffic* t, char* buf, size_t cap);
 void oo_traffic_set_bus(OoTraffic* t, OoBus* bus); /* player bus + trailers as obstacles; null clears */
 float oo_traffic_car_var(OoTraffic* t, int32_t i, const char* name, float fallback);
+/* night (street lights on): every AI car gets AI_Light = 1 (head / tail lamps, night maps, coronas) */
+void oo_traffic_set_night(OoTraffic* t, int32_t night);
+/* the text a [texttexture] field of car i shows now (its script string: line, destination, plate), UTF-8 */
+size_t oo_traffic_car_texttex_string(OoTraffic* t, int32_t i, const char* field, char* buf, size_t cap);
 /* takes the car of id `id` off the road (editor delete); 1 when it was on it */
 int32_t oo_traffic_remove_car(OoTraffic* t, uint64_t id);
 /* lit [light_enh]/[light_enh_2] lamps, 10 floats each: x y z, dir x y z (0: omni), r g b, size*level */
@@ -132,7 +136,7 @@ uint64_t oo_traffic_service_bus_stations(OoTraffic* t, const char* bus_path, dou
 /* what car `id` does now (one call per car every half second for the editor's car window) */
 typedef struct OoCarState {
     int32_t action; /* 0 driving 1 accelerating 2 braking 3 queue 4 red light 5 giving way 6 at a stop 7 pulling out /
-                       parking 8 end of its way 9 waiting for room on its exit */
+                       parking 8 end of its way 9 waiting for room on its exit 10 held by something else (see why) */
     float speed_kmh;
     float stopped_s;
     float why_dist; /* m to what holds it, -1 none */
@@ -146,6 +150,8 @@ int32_t oo_traffic_car_body(OoTraffic* t, int32_t i, float* out16); /* body -> w
 void oo_traffic_set_view(OoTraffic* t, double dx, double dy, double dz, float fov_deg, float aspect);
 /* one line on why car `id` drives where it does: lane, exits, plan, route, holds (the editor logs it on a click) */
 size_t oo_traffic_car_explain(OoTraffic* t, uint64_t id, char* buf, size_t cap);
+/* platform side of [busstop] object `id` (its 6th string: 0 right, 1 the other, 2 both), before placing buses */
+void oo_traffic_stop_side(OoTraffic* t, int64_t id, float side);
 size_t oo_mesh_file(OoBus* bus, int32_t i, char* buf, size_t cap); /* UTF-8 .o3d path */
 /* [CTC] paint of the player's train mesh i (its first repaint, as OMSI's dialog picks): "<default>	<file>
 " lines */

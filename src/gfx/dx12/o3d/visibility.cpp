@@ -79,4 +79,9 @@ std::vector<LoadedMeshChunkInfo> HelloO3dRenderer::chunk_info() const {
     return out;
 }
 
+std::optional<std::string> HelloO3dRenderer::chunk_mouseevent(std::size_t chunk) const {
+    if (!impl_ || chunk >= impl_->mesh_chunks.size()) return std::nullopt;
+    return impl_->mesh_chunks[chunk].meta.mouseevent_var;
+}
+
 } // namespace omsi::gfx::dx12

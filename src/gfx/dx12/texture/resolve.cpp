@@ -184,7 +184,10 @@ std::optional<std::filesystem::path> resolve_season_rebind(const std::filesystem
                ieq_ascii_path(name, L"WinterSnowfall") || ieq_ascii_path(name, L"SummerDry") ||
                ieq_ascii_path(name, L"Summer");
     };
-    // Peel season/night so we re-resolve from owner; never pick night for albedo.
+    // A night map (texture\night\...) stays: peeled and re-resolved it became the day albedo, and that added at
+    // night lit everything up after a month change in the dark.
+    if (ieq_ascii_path(dir.filename(), L"night")) return std::nullopt;
+    // Peel season so we re-resolve from owner; never pick night for albedo.
     if (is_season_or_night(dir.filename())) dir = dir.parent_path();
     if (ieq_ascii_path(dir.filename(), L"texture") || ieq_ascii_path(dir.filename(), L"Texture")) {
         return try_texture_folder_albedo(dir.parent_path(), filename, true);

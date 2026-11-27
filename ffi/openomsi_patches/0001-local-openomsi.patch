@@ -1,0 +1,71 @@
+diff --git a/crates/omsi-sim/src/ai_traffic/junctions.rs b/crates/omsi-sim/src/ai_traffic/junctions.rs
+index 3bbedc5..43643d5 100644
+--- a/crates/omsi-sim/src/ai_traffic/junctions.rs
++++ b/crates/omsi-sim/src/ai_traffic/junctions.rs
+@@ -1167,7 +1167,11 @@ impl TrafficSim {
+                     // follow this car in: it need not be clear of the joint first, it must be
+                     // there well ahead of the other - the gap a driver takes to turn into a
+                     // road's traffic, not the one to cross it)
+-                    let gap = if c.merge { st.accept_gap.max(t_mine + 3.0) } else { (st.accept_gap + 2.0).max(t_clear + 1.0) };
++                    // (gap acceptance from the other's speed and distance: it goes when it is clear of the
++                    // meeting place - the crossing lane's stretch and its own length, `t_clear` - well before the
++                    // other gets there, not only in a gap of 6 s and more: with `accept_gap + 2` a side road's car
++                    // stood at its line while the main road's cars came by 4 s apart, each far enough to let it go)
++                    let gap = if c.merge { (st.accept_gap * 0.6).max(t_mine + 2.0) } else { (st.accept_gap * 0.6).max(t_clear + 1.5) };
+                     if ring_queue || t_j < gap * patience {
+                         if !ring_queue && (t_j == f32::MAX || o.state.speed < 0.3) {
+                             soft.push(j);
+diff --git a/crates/omsi-sim/src/timetable_run.rs b/crates/omsi-sim/src/timetable_run.rs
+index 2468235..8d0546e 100644
+--- a/crates/omsi-sim/src/timetable_run.rs
++++ b/crates/omsi-sim/src/timetable_run.rs
+@@ -7,7 +7,7 @@
+ pub mod announce;
+ mod duty;
+ mod ibis;
+-mod route;
++pub mod route; // (public: the map editor's timetable buses place their stops with `place_stops`)
+ mod sim;
+ mod times;
+ mod tours;
+diff --git a/crates/omsi-sim/src/traffic/mod.rs b/crates/omsi-sim/src/traffic/mod.rs
+index 5a3e9a4..5ecf77e 100644
+--- a/crates/omsi-sim/src/traffic/mod.rs
++++ b/crates/omsi-sim/src/traffic/mod.rs
+@@ -61,6 +61,12 @@ pub struct Network {
+     /// The map drives on the left (`global.cfg` `[lht]`): priority to the left, the
+     /// oncoming lane on the right, turning right across the oncoming traffic.
+     pub left_hand: bool,
++    /// Between paths of equal rank that cross (no `[rule] priority`, no ring, no turn across the
++    /// oncoming traffic) the one coming from the right goes first (StVO §8; from the left on a
++    /// left-hand map). Off by default: Omsi.exe has no such rule (first come, first served,
++    /// #2058); the map editor's traffic turns it on, where cars standing at every approach of
++    /// an unsigned crossing could not settle who goes.
++    pub right_before_left: bool,
+ }
+ 
+ /// `Network::reach` is counted up to this far (m).
+diff --git a/crates/omsi-sim/src/traffic/network.rs b/crates/omsi-sim/src/traffic/network.rs
+index 94a9164..be57614 100644
+--- a/crates/omsi-sim/src/traffic/network.rs
++++ b/crates/omsi-sim/src/traffic/network.rs
+@@ -350,7 +350,18 @@ impl Network {
+             return la.turn == across && lb.turn != across;
+         }
+         // side by side from the same direction: the one turning across the other waits
+-        rel.abs() <= 30.0 && la.turn != 0 && lb.turn == 0
++        if rel.abs() <= 30.0 {
++            return la.turn != 0 && lb.turn == 0;
++        }
++        // (opt-in) crossing from the side: the one from the right goes first (b's heading is a's turned
++        // left by about 90 degrees when b comes from a's right; mirrored on a left-hand map)
++        // (never where a light controls either lane: there the lights decide - a car with green gave way to one
++        //  on its right standing at its red, and waited at its line for good)
++        if self.right_before_left && la.traffic_light.is_none() && lb.traffic_light.is_none() && (45.0..=135.0).contains(&rel.abs()) {
++            let from_right = if self.left_hand { rel > 0.0 } else { rel < 0.0 };
++            return from_right;
++        }
++        false
+     }
+ 
+     /// The lane beside `lane` at `s` that carries the traffic the other way (the other half

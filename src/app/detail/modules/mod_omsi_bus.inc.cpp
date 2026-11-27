@@ -1280,9 +1280,23 @@
             const std::size_t n = oo_bus_skinned(bb.oo, oi, s_skin.data(), 65536u);
             if (n > 0) renderer.update_chunk_skin(chunk, s_skin.data(), static_cast<std::uint32_t>(n));
         };
-        // [viewpoint]: the player's bus is seen from inside while driven (cab / saloon, bit 2), from outside
-        // otherwise (bit 1); the AI-only meshes (4: simplified saloons, joints) never show on it
-        const int view_bit = bus_drive_active ? 2 : 1;
+        // [viewpoint] (OMSI: 1 outside, 2 inside - cab and saloon, 4 AI only): what the camera sees from where
+        // it is - inside from the driver's and the passengers' views (F1 / F3), and whenever the eye stands in the
+        // bus (walking through the saloon, the free camera put in it); outside from the chase view, the free camera
+        // out there, walking past it. (It was "inside while driven" only: the outside view showed the cab, the
+        // pedestrian inside saw the bare shell.) The AI-only meshes never show on the player's bus.
+        bool view_inside = bus_drive_active && (bus_cam_mode == 1 || bus_cam_mode == 3);
+        if (!view_inside) {
+            float ex = 0.f, ey = 0.f, ez = 0.f;
+            camera.eye_position(ex, ey, ez);
+            const float h = b.heading_deg * 3.14159265f / 180.f;
+            const float dx = ex - b.x, dy = ey - b.y;
+            const float lx = dx * std::cos(h) - dy * std::sin(h);                       // across
+            const float ly = dx * std::sin(h) + dy * std::cos(h) - b.doc.bbox_offset_y; // along
+            view_inside = std::fabs(lx) < b.doc.bbox_half_x + 0.1f && std::fabs(ly) < b.doc.bbox_half_y + 0.1f &&
+                          ez > b.z - 0.5f && ez < b.z + 4.5f;
+        }
+        const int view_bit = view_inside ? 2 : 1;
         auto viewpoint_ok = [&](int vp) { return vp == 0 || (vp & view_bit) != 0; };
         if (b.oo) {
             for (std::size_t mi = 0; mi < lod->meshes.size(); ++mi) {
@@ -2669,6 +2683,38 @@
                 panel.set_status("OMSI bus: arranque automatico (Shift+U)...");
             }
             oo_shift_u_was = shift_u;
+            // The cab's [mouseevent]s (buttons, switches, door taps): a click on such a mesh fires its trigger and
+            // letting go its `_off`, as Omsi.exe does - the same path as a key (oo_key). Before, a click in the cab
+            // reached nothing (the editor's FFI had no way to them).
+            {
+                static bool s_me_lmb_was = false;
+                static std::string s_me_held;
+                const bool lmb = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_LEFT) == GLFW_PRESS;
+                if (lmb && !s_me_lmb_was && !ImGui::GetIO().WantCaptureMouse && b.oo) {
+                    static std::vector<std::size_t> s_cab;
+                    s_cab.clear();
+                    for (const auto ch : b.chunks)
+                        if (ch != kNoChunk) s_cab.push_back(ch);
+                    for (const auto ch : b.sec_chunks)
+                        if (ch != kNoChunk) s_cab.push_back(ch);
+                    float mx = 0.f, my = 0.f, fw = 1.f, fh = 1.f;
+                    input::cursor_to_framebuffer(window, mx, my, fw, fh);
+                    float wvp[16]{};
+                    camera.build_world_view_proj(fh > 0.f ? fw / fh : 1.6f, wvp);
+                    if (!s_cab.empty())
+                        if (const auto hit = renderer.pick_chunk(mx, my, static_cast<std::uint32_t>(fw), static_cast<std::uint32_t>(fh),
+                                                                 wvp, true, s_cab.data(), s_cab.size()))
+                            if (const auto me = renderer.chunk_mouseevent(*hit); me && !me->empty()) {
+                                s_me_held = *me;
+                                log::info("omsi bus mouseevent " + s_me_held);
+                                oo_key(b.oo, s_me_held.c_str(), 1);
+                            }
+                } else if (!lmb && s_me_lmb_was && !s_me_held.empty()) {
+                    if (b.oo) oo_key(b.oo, s_me_held.c_str(), 0);
+                    s_me_held.clear();
+                }
+                s_me_lmb_was = lmb;
+            }
             const bool o_now = editor_keys_live_for_bus() && glfwGetKey(window, GLFW_KEY_O) == GLFW_PRESS;
             if (o_now && !mouse_drive.o_was) {
                 mouse_drive.on = !mouse_drive.on;
@@ -2792,7 +2838,9 @@
             // the tiles around the spawn are still coming in: the bus waits (ground, objects, paths)
             static float wait_t = 0.f;
             wait_t += dt;
-            if (!stream_busy() || wait_t > 30.f) {
+            // (8 s at most: with a wide view radius the streamer is hardly ever idle, and held 30 s the bus
+            //  looked dead - no start-up, no throttle; the tiles at the spawn come first and are in by then)
+            if (!stream_busy() || wait_t > 8.f) {
                 b.waiting_stream = false;
                 b.ground_cache.clear();
                 b.obst_age = 1e9f;

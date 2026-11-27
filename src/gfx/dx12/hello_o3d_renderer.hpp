@@ -112,6 +112,8 @@ public:
         const std::function<bool(const omsi::model_cfg::ModelCfgMeshEntry&)>& is_visible);
     void apply_visible_runtime(const omsi::model_cfg::ModelCfgDocument& cfg, const omsi::visible::VisibleRuntime& rt);
     [[nodiscard]] std::vector<LoadedMeshChunkInfo> chunk_info() const;
+    // the [mouseevent] trigger of one chunk (a cab button / switch), none when it has no such event
+    [[nodiscard]] std::optional<std::string> chunk_mouseevent(std::size_t chunk) const;
     // require_mouseevent: bus/viewer mesh clicks. Editor: false + optional allow-list (SCO/SLI chunks).
     [[nodiscard]] std::optional<std::size_t> pick_chunk(float mouse_x, float mouse_y, std::uint32_t fb_width,
                                                         std::uint32_t fb_height,
@@ -212,9 +214,13 @@ public:
     // A vehicle's [matl_alpha] 2 materials (glass in the body texture): the opaque texels drawn with depth in
     // the opaque phase, only the translucent ones blended (all blended without depth, bodies looked like glass).
     void set_chunk_split_blend(std::size_t chunk_index, bool on);
-    // entrypoint / carpark helper boxes: shown only while set_show_editor_helpers(true) (Vista > Show carpark)
-    void set_chunk_editor_helper(std::size_t chunk_index, bool on);
-    void set_show_editor_helpers(bool on);
+    // Editor helper meshes by kind: kEditorHelperOnlyEditor ([onlyeditor] objects, entrypoints - Vista > objetos
+    // onlyeditor), kEditorHelperCarpark (carpark boxes - hidden under the real parked cars unless Show carpark).
+    // A chunk is drawn only while every kind it has is in the shown mask. 0 = an ordinary mesh.
+    static constexpr std::uint8_t kEditorHelperOnlyEditor = 1, kEditorHelperCarpark = 2;
+    void set_chunk_editor_helper(std::size_t chunk_index, std::uint8_t kinds);
+    [[nodiscard]] std::uint8_t chunk_editor_helper(std::size_t chunk_index) const;
+    void set_editor_helper_mask(std::uint8_t shown_kinds);
     // Per frame: night blend 0..1 (OMSI nightmaps fade in) and wind vector in m/s (world XY).
     void set_scene_night_wind(float night_blend, float wind_x_ms, float wind_y_ms);
     // Mark/unmark a chunk as terrain: terrain chunks are never cut by the render-distance cull

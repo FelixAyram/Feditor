@@ -164,6 +164,7 @@ bool HelloO3dRenderer::create_pipeline() {
     auto vs_surface = compile_shader(kShaderSource, "vs_surface", "vs_5_1");
     auto vs_spline = compile_shader(kShaderSource, "vs_spline", "vs_5_1");
     auto vs_rail = compile_shader(kShaderSource, "vs_rail", "vs_5_1");
+    auto vs_vehshadow = compile_shader(kShaderSource, "vs_vehshadow", "vs_5_1");
     auto vs_terrain_under = compile_shader(kShaderSource, "vs_terrain_under", "vs_5_1");
     auto vs_terrain = compile_shader(kShaderSource, "vs_terrain", "vs_5_1");
 
@@ -417,7 +418,25 @@ bool HelloO3dRenderer::create_pipeline() {
     }
     make_alpha_pso(true, true, d.pipeline_state_alpha_nozcheck.GetAddressOf());
     // OMSI vehicle shadow: matl_alpha=2 + matl_noZwrite; depth test ON in viewer (noZcheck breaks without terrain).
-    make_alpha_pso(true, false, d.pipeline_state_alpha_shadow.GetAddressOf());
+    // Drawn 5 cm up (vs_vehshadow): at the road's own height it flickered against it.
+    {
+        D3D12_GRAPHICS_PIPELINE_STATE_DESC sh = pso;
+        sh.VS = {vs_vehshadow->GetBufferPointer(), vs_vehshadow->GetBufferSize()};
+        sh.PS = {ps_alpha->GetBufferPointer(), ps_alpha->GetBufferSize()};
+        auto& blend = sh.BlendState.RenderTarget[0];
+        blend.BlendEnable = TRUE;
+        blend.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+        blend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+        blend.BlendOp = D3D12_BLEND_OP_ADD;
+        blend.SrcBlendAlpha = D3D12_BLEND_ONE;
+        blend.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+        blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+        sh.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+        sh.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+        sh.DepthStencilState.DepthEnable = TRUE;
+        throw_hr(d.device->CreateGraphicsPipelineState(&sh, IID_PPV_ARGS(d.pipeline_state_alpha_shadow.GetAddressOf())),
+                 "CreateVehicleShadowPSO");
+    }
     {
         D3D12_GRAPHICS_PIPELINE_STATE_DESC inv_pso = pso;
         inv_pso.PS = {ps_alpha->GetBufferPointer(), ps_alpha->GetBufferSize()};

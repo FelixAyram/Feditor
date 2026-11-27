@@ -594,6 +594,7 @@ void apply_vista_kv(EditorUiSettings& s, const std::string& key, const std::stri
     else if (key == "shaft_plus") s.shaft_plus = parse_cfg_bool(val, s.shaft_plus);
     else if (key == "fog_enabled") s.fog_enabled = parse_cfg_bool(val, s.fog_enabled);
     else if (key == "parked_cars_on") s.parked_cars_on = parse_cfg_bool(val, s.parked_cars_on);
+    else if (key == "show_onlyeditor_objects") s.show_onlyeditor_objects = parse_cfg_bool(val, s.show_onlyeditor_objects);
     else if (key == "shadow_distance_m") {
         try {
             s.shadow_distance_m = std::stof(val);
@@ -680,6 +681,7 @@ bool write_editor_ui_cfg(const std::filesystem::path& path, const EditorUiSettin
     out << "shaft_plus=" << (ui.shaft_plus ? "1" : "0") << "\r\n";
     out << "fog_enabled=" << (ui.fog_enabled ? "1" : "0") << "\r\n";
     out << "parked_cars_on=" << (ui.parked_cars_on ? "1" : "0") << "\r\n";
+    out << "show_onlyeditor_objects=" << (ui.show_onlyeditor_objects ? "1" : "0") << "\r\n";
     out << "shadow_distance_m=" << ui.shadow_distance_m << "\r\n";
     out << "vsync=" << (ui.vsync ? "1" : "0") << "\r\n";
     out << "world_sound_enabled=" << (ui.world_sound_enabled ? "1" : "0") << "\r\n";

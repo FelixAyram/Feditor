@@ -631,8 +631,10 @@ void HelloO3dRenderer::populate_command_list() {
             // The near cascade every frame (redrawn only when stale - something in it moved): drawn every second
             // frame, the shadows of the moving AI cars stood still one frame in two and jumped - they flickered
             // and popped over the cars while they drove. The middle and far ones keep their turns.
+            // (the middle one every second frame: every fourth, the shadows of the cars 18-80 m off stood still
+            //  three frames and jumped - they flickered behind the cars)
             csm_cascade_now = 0;
-            if ((t & 3u) == 0u) csm_cascade_also = 1;
+            if ((t & 1u) == 1u) csm_cascade_also = 1;
             else if ((t & 7u) == 2u) csm_cascade_also = 2;
             csm_pending = true; // recorded on a worker below, once the terrain LOD is decided
         }

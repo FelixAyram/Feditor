@@ -306,6 +306,7 @@ void EditorSidePanel::apply_ui_settings(const map::EditorUiSettings& ui) {
     imgui_state_.shaft_plus = ui.shaft_plus;
     imgui_state_.fog_enabled = ui.fog_enabled;
     imgui_state_.parked_cars_on = ui.parked_cars_on;
+    imgui_state_.show_onlyeditor_objects = ui.show_onlyeditor_objects;
     imgui_state_.shadow_distance_m = ui.shadow_distance_m;
     imgui_state_.shadow_map_size = ui.shadow_map_size;
     imgui_state_.path_style = ui.path_style == 1 ? 1 : 0;
@@ -439,6 +440,7 @@ void EditorSidePanel::collect_ui_settings(map::EditorUiSettings& out) const {
         out.shaft_plus = imgui_state_.shaft_plus;
         out.fog_enabled = imgui_state_.fog_enabled;
         out.parked_cars_on = imgui_state_.parked_cars_on;
+        out.show_onlyeditor_objects = imgui_state_.show_onlyeditor_objects;
         out.shadow_distance_m = imgui_state_.shadow_distance_m;
         out.shadow_map_size = imgui_state_.shadow_map_size;
         out.path_style = imgui_state_.path_style == 1 ? 1 : 0;

@@ -39,6 +39,12 @@ pub struct OoTraffic {
     service_types: std::collections::HashMap<String, Arc<VehicleType>>,
     /// the editor camera's view (direction x y z, vertical fov in degrees, aspect), see oo_traffic_set_view
     view: Option<([f64; 3], f32, f64)>,
+    /// cars giving way: (seconds waited, the car it gave way to last, how many have gone by since); see `patience`
+    yield_watch: std::collections::HashMap<u64, (f32, u64, u8, f32)>,
+    /// cars whose driving was tuned for the editor (queue gap, reaction): see `tune_new_cars`
+    tuned: std::collections::HashSet<u64>,
+    /// `[busstop]` objects' platform side (their 6th string: 0 right, 1 the other, 2 both), see oo_traffic_stop_side
+    stop_sides: std::collections::HashMap<i64, f32>,
 }
 
 #[repr(C)]
@@ -183,6 +189,9 @@ pub extern "C" fn oo_traffic_create(map_dir: *const c_char, target: i32, spawn_r
             light_of_object: Default::default(),
             player: None,
             view: None,
+            yield_watch: Default::default(),
+            tuned: Default::default(),
+            stop_sides: Default::default(),
         }))
     })
 }
@@ -337,27 +346,39 @@ fn populate(t: &mut OoTraffic, center: DVec3, forward: DVec3) {
             i += 1;
         }
     }
-    if t.sim.cars.len() >= t.sim.target || t.sim.types.is_empty() || t.sim.net.lanes.is_empty() {
+    // the map's traffic at this hour (unsched_trafficdens.txt curves per group, or global.cfg's curve): the
+    // cars wanted are the editor's number times that, never under 15 % of it
+    let dens_now = t.sim.street_density();
+    let target = if dens_now.is_finite() && dens_now > 0.0 {
+        ((t.sim.target as f32) * dens_now.clamp(0.15, 2.0)).round() as usize
+    } else {
+        t.sim.target
+    };
+    if t.sim.cars.len() >= target || t.sim.types.is_empty() || t.sim.net.lanes.is_empty() {
         return;
     }
     let lanes = t.sim.net.lanes_starting_near(center, t.sim.spawn_radius);
     if lanes.is_empty() {
         return;
     }
-    let total_w: f32 = t.sim.types.iter().map(|x| x.1.max(0.01)).sum();
     let mut spawned = 0;
     let budget = if t.initial { 40 } else { 3 };
     for _ in 0..(budget * 12) {
-        if t.sim.cars.len() >= t.sim.target || spawned >= budget {
+        if t.sim.cars.len() >= target || spawned >= budget {
             break;
         }
         let r = next_rng(&mut t.rng);
         let li = lanes[(r % lanes.len() as u64) as usize];
         let (ok, len) = {
             let l = &t.sim.net.lanes[li];
-            (l.kind == LaneKind::Street && !l.no_cars && l.density > 0.0 && l.length() >= 8.0 && l.traffic_light.is_none() && l.source != 2, l.length())
+            (l.kind == LaneKind::Street && l.density > 0.0 && l.length() >= 8.0 && l.traffic_light.is_none() && l.source != 2, l.length())
         };
         if !ok {
+            continue;
+        }
+        // (a lane brings traffic as much as its density says: one at 0.2 gets a car a fifth as often as one at 1)
+        let dens = t.sim.net.lanes[li].density;
+        if dens < 1.0 && (next_rng(&mut t.rng) % 1000) as f32 / 1000.0 > dens {
             continue;
         }
         let s = ((next_rng(&mut t.rng) % 10_000) as f32 / 10_000.0) * (len - 4.0).max(0.0) + 2.0;
@@ -371,15 +392,11 @@ fn populate(t: &mut OoTraffic, center: DVec3, forward: DVec3) {
         if !t.initial && d < 260.0 && to.normalize_or_zero().dot(f2) > 0.35 {
             continue;
         }
-        let mut pick = (next_rng(&mut t.rng) % 1_000_000) as f32 / 1_000_000.0 * total_w;
-        let mut ty = t.sim.types[0].0.clone();
-        for x in &t.sim.types {
-            pick -= x.1.max(0.01);
-            if pick <= 0.0 {
-                ty = x.0.clone();
-                break;
-            }
-        }
+        // the type as openOMSI picks it (density.rs pick_type): only the vehicles the lane is open to ([rule]
+        // trucks / buses / no_cars, Lane::allows - Omsi.exe 0x71d714), of the groups the lane carries
+        // ([rule] trafficdensity per unsched_vehgroups.txt group) as much as each group makes at this hour
+        // (unsched_trafficdens.txt). By weight alone, trucks came out on every street and in yards.
+        let Some(ty) = t.sim.pick_type(LaneKind::Street, Some(li)) else { continue };
         if !t.sim.spawn_clear(&ty, pos, heading as f64) || !t.sim.spawn_gap(pos) {
             continue;
         }
@@ -424,8 +441,98 @@ pub extern "C" fn oo_traffic_tick(t: *mut OoTraffic, dt: f32, cx: f64, cy: f64, 
             let p = unsafe { std::slice::from_raw_parts(player, 7) };
             Some((DVec3::new(p[0], p[1], p[2]), p[3], p[4] as f32, p[5] as f32, p[6] as f32))
         };
+        tune_new_cars(t);
         t.sim.tick(dt, pb);
+        patience(t, dt);
     })
+}
+
+/// A queue closes up to 1.5 - 2.5 m and moves off half a second after the car ahead (openOMSI's drivers kept
+/// 1.6 - 3 m plus 0.75 m and reacted in 0.8 s: queues stood long and loose). Once per car.
+fn tune_new_cars(t: &mut OoTraffic) {
+    if t.tuned.len() > 20_000 {
+        let alive: std::collections::HashSet<u64> = t.sim.cars.iter().map(|c| c.id).collect();
+        t.tuned.retain(|id| alive.contains(id));
+    }
+    for c in &mut t.sim.cars {
+        if !t.tuned.insert(c.id) {
+            continue;
+        }
+        let r = ((c.id.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 40) % 1000) as f32 / 1000.0;
+        c.state.min_gap = c.state.min_gap.min(1.5 + 1.0 * r);
+        c.state.reaction = c.state.reaction.min(0.4 + 0.25 * r);
+    }
+}
+
+/// A driver giving way takes his turn either after 10 s or after 2 to 4 cars have gone by (one rule or the
+/// other, by driver): openOMSI's deadlock pass (`yield_pass`) - the right of way stops holding him for a
+/// while; bodies in the way, people, lights and a full exit still do, so nobody is driven into anybody.
+/// 30 s of giving way in all (the passes that did not get him going count on) is the limit for every driver
+/// not held by a light: then the cars he waits for that stand themselves give up their claims on the junction
+/// (a circle of drivers each waiting for the other's claim never broke: one stood 63 s), and he is let go
+/// again every few seconds until he moves.
+fn patience(t: &mut OoTraffic, dt: f32) {
+    use omsi_sim::ai_traffic::deadlock::Hold;
+    const WAIT: f32 = 10.0;
+    const CAP: f32 = 30.0;
+    const PASS: f32 = 6.0;
+    let now = t.sim.time;
+    let mut seen = std::collections::HashSet::new();
+    let mut release: Vec<u64> = Vec::new();
+    for c in &mut t.sim.cars {
+        // (never at a light: the lights decide there, and a pass does not take a car through a red anyway)
+        let standing = c.vehicle.physics.speed.abs() < 1.0;
+        let giving_way = (c.yielding || c.why.0 == "yield" || c.why.0 == "merge") && !c.light_hold && standing;
+        if !giving_way {
+            continue;
+        }
+        seen.insert(c.id);
+        // (seconds giving way, the car it gave way to last, how many went by since, when it was last let go)
+        let e = t.yield_watch.entry(c.id).or_insert((0.0, 0, 0, f32::MIN));
+        e.0 += dt;
+        let other = c.yield_to.or(c.waits_on).unwrap_or(0);
+        if other != 0 && other != e.1 {
+            if e.1 != 0 {
+                e.2 = e.2.saturating_add(1); // (the one it waited for went by: the next one holds it now)
+            }
+            e.1 = other;
+        }
+        if c.yield_pass > now {
+            continue; // (a pass is running)
+        }
+        // one rule per driver, by its id: half of them take their turn after 10 s of giving way, the other
+        // half once 2 to 4 cars have gone by
+        let h = c.id.wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 33;
+        let by_time = h % 2 == 0;
+        let need = 2 + ((h >> 1) % 3) as u8;
+        let turn = if by_time { e.0 > WAIT } else { e.2 >= need };
+        let first = e.3 == f32::MIN;
+        let stuck = e.0 > CAP && now - e.3 > PASS;
+        if (turn && first) || stuck {
+            c.yield_pass = now + PASS;
+            e.3 = now;
+            if e.0 > CAP {
+                for (o, why) in &c.holds {
+                    if !matches!(why, Hold::Body) {
+                        release.push(*o);
+                    }
+                }
+                if let Some(o) = c.yield_to.or(c.waits_on) {
+                    release.push(o);
+                }
+            }
+        }
+    }
+    if !release.is_empty() {
+        for c in &mut t.sim.cars {
+            // (only of one that stands and is not at a light: a car rolling through keeps its way)
+            if release.contains(&c.id) && c.vehicle.physics.speed.abs() < 0.5 && !c.light_hold {
+                c.reserved.clear();
+                c.exit_claim = None;
+            }
+        }
+    }
+    t.yield_watch.retain(|id, _| seen.contains(id));
 }
 
 #[unsafe(no_mangle)]
@@ -576,6 +683,27 @@ pub extern "C" fn oo_traffic_car_var(t: *mut OoTraffic, i: i32, name: *const c_c
     with_t(t, fallback, |t| t.sim.cars.get(i.max(0) as usize).and_then(|c| c.vehicle.var(name)).unwrap_or(fallback))
 }
 
+/// The text a `[texttexture]` field of car i shows now (UTF-8): its script's string variable (a timetable bus's
+/// line and destination, its number plate) or a built-in string - openOMSI `text_texture_string`, as for the
+/// player's bus (`oo_bus_texttex_string`). A coupled rear section reads the leading vehicle's strings, as in
+/// openOMSI. Returns the bytes written.
+#[unsafe(no_mangle)]
+pub extern "C" fn oo_traffic_car_texttex_string(t: *mut OoTraffic, i: i32, field: *const c_char, buf: *mut c_char, cap: usize) -> usize {
+    let Some(field) = (unsafe { cstr(field) }) else { return 0 };
+    with_t(t, 0, |t| match t.sim.cars.get(i.max(0) as usize) {
+        Some(c) => crate::write_cstr(&c.vehicle.text_texture_string(field.trim()), buf, cap),
+        None => 0,
+    })
+}
+
+/// Night (the street lights on): openOMSI's traffic then writes `AI_Light` (and `AI_Interiorlight`) 1 to every
+/// car, which its model switches its head / tail lamps, night maps and `[light_enh]` coronas on. Never set
+/// before, every AI car drove dark at night (only the brake lights' coronas showed).
+#[unsafe(no_mangle)]
+pub extern "C" fn oo_traffic_set_night(t: *mut OoTraffic, night: i32) {
+    with_t(t, (), |t| t.sim.night = night != 0)
+}
+
 /// The lit lamps of the cars within `radius` of (cx, cy) (see `vehicle_lamps`), 10 floats each, at most
 /// `cap`, the nearest cars first. Returns how many.
 #[unsafe(no_mangle)]
@@ -645,9 +773,22 @@ pub extern "C" fn oo_traffic_car_paint(t: *mut OoTraffic, i: i32, k: i32, buf: *
             None => &c.vehicle.ty,
             Some(p) => &c.vehicle.trailers[p].ty,
         };
-        let map = match (part, c.scheme) {
-            (None, Some(s)) => ty.scheme_substitutions(s, omsi_texture::find_texture).0,
-            _ => ty.default_substitutions(&t.root),
+        // A coupled part (an articulated bus's rear, a trailer) is painted in the front's scheme, as OMSI
+        // repaints the whole consist: the scheme of the same name in the part's own [CTC] list, else the same
+        // index (openOMSI `attach_trailers`) - before, only the front took the repaint and the rear kept the
+        // model's own livery.
+        let scheme = match (part, c.scheme) {
+            (None, s) => s,
+            (Some(_), Some(s)) => {
+                let name = c.vehicle.ty.paint_schemes.get(s).map(|p| p.name.trim().to_ascii_lowercase());
+                name.and_then(|n| ty.paint_schemes.iter().position(|p| p.name.trim().to_ascii_lowercase() == n))
+                    .or_else(|| (s < ty.paint_schemes.len()).then_some(s))
+            }
+            (Some(_), None) => None,
+        };
+        let map = match scheme {
+            Some(s) => ty.scheme_substitutions(s, omsi_texture::find_texture).0,
+            None => ty.default_substitutions(&t.root),
         };
         let mut s = String::new();
         for (from, to) in map {
@@ -764,27 +905,36 @@ pub extern "C" fn oo_traffic_service_bus(
 
 fn place_service(t: &mut OoTraffic, ty: Arc<VehicleType>, route: Vec<usize>, st: &[f64], line: String, terminus: String) -> u64 {
     let net = &t.sim.net;
-        // the stops on it
+    // the stops on it, as Omsi.exe's AI bus comes to its [busstop] (TRoadVehicleInst_CalculatePAI 0x7dac5e..,
+    // ported in openOMSI timetable_run::route): the stop object projected onto the route on its platform's side,
+    // in the trip's order; the bus pulls over so that its kerb-side flank stands 0.3 m past the box's centre
+    // (`bay_for`), and stops where its own [ai_brake_performance] hold puts its origin (`shift_stops`). (Before:
+    // the nearest point of any lane of the route, on the lane's middle - buses stood in the road, short of or past
+    // the stop, at the stop across the road on the way back.)
     let mut stop_list: Vec<(usize, f32, f32, f64, i64, f32)> = Vec::new();
+    let mut from = 0usize;
     for q in st.chunks(4) {
-        let p = DVec3::new(q[0], q[1], 0.0);
-        let mut best: Option<(usize, f32, f64)> = None;
-        for (ri, &li) in route.iter().enumerate() {
-            let lp = { let l = &net.lanes[li]; let mut pp = p; pp.z = l.at(0.0).0.z; l.nearest_point(pp) };
-            if let Some((s, d)) = lp {
-                if d < 25.0 && best.is_none_or(|b| d < b.2) {
-                    best = Some((ri, s, d));
-                }
-            }
-        }
-        if let Some((ri, s, _)) = best {
-            stop_list.push((ri, s, 0.0, q[3], q[2] as i64, 0.0));
+        let id = q[2] as i64;
+        let side = t.stop_sides.get(&id).copied().unwrap_or(0.0);
+        let z = net.lanes[route[from.min(route.len() - 1)]].at(0.0).0.z;
+        if let Some((ri, s, lat)) = net.project_stop_on_route_side(&route, DVec3::new(q[0], q[1], z), Some(25.0), from, side as u8) {
+            stop_list.push((ri, s, lat, q[3], id, side));
+            from = ri;
         }
     }
+    omsi_sim::timetable_run::route::place_stops(net, &route, 0, &mut stop_list, &ty, false);
     stop_list.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
     let (pos, heading) = net.lanes[route[0]].at(1.0);
     if !t.sim.spawn_clear(&ty, pos, heading as f64) {
-        return 0;
+        // AI cars standing where the bus comes are taken off (they held a timetable bus off the road for good)
+        let reach = ty.def.bounding_box.map(|b| b[1] as f64 * 0.5 + 4.0).unwrap_or(10.0);
+        let under: Vec<u64> = t.sim.cars.iter().filter(|c| c.bus.is_none() && (c.vehicle.position - pos).truncate().length() < reach).map(|c| c.id).collect();
+        for id in under {
+            let _ = t.sim.take_off_id(id, Removal::Finished);
+        }
+        if !t.sim.spawn_clear(&ty, pos, heading as f64) {
+            return 0;
+        }
     }
     let seed = next_rng(&mut t.rng);
     let scheme = if ty.paint_schemes.is_empty() { None } else { t.sim.ai_scheme(&ty, seed >> 8) };
@@ -1023,20 +1173,31 @@ pub extern "C" fn oo_traffic_car_state(t: *mut OoTraffic, id: u64, out: *mut OoC
             matches!(b.phase, Phase::Boarding | Phase::Waiting | Phase::Closing | Phase::TripDone)
         });
         let standing = v.abs() < 0.4;
+        // (what holds it nearest ahead - `why` - first: a car giving way short of its light's line showed
+        //  "semaforo en rojo" while a car at its right held it)
+        let why = c.why.0;
         o.action = if at_stop {
             6
-        } else if c.light_hold {
+        } else if why == "light" {
             4
-        } else if c.yielding {
+        } else if why == "yield" || why == "merge" || (c.yielding && why.is_empty()) {
             5
+        } else if why == "lead" && standing {
+            3
+        } else if c.light_hold && why.is_empty() {
+            4
         } else if c.exit_wait {
             9
         } else if c.pull_out > 0.0 || c.park.is_some() {
             7
         } else if standing && c.state.route.is_empty() && c.gone {
             8
-        } else if standing && (c.held || c.lead_car.is_some() || c.stopped > 0.5) {
+        } else if standing && c.why.0 == "lead" {
             3
+        } else if standing && (c.why.0 == "merge" || c.why.0 == "yield") {
+            5
+        } else if standing && (c.held || c.lead_car.is_some() || c.stopped > 0.5) {
+            10 // (held by something else: `why` says what - "keep_back", "people", "service", ...)
         } else if c.state.braking || brake > 0.15 {
             2
         } else if throttle > 0.15 {
@@ -1131,5 +1292,14 @@ pub extern "C" fn oo_traffic_car_explain(t: *mut OoTraffic, id: u64, buf: *mut c
         if !c.junction_why.is_empty() { s.push_str(&format!(" junction: {}", c.junction_why)); }
         if c.stopped > 0.5 { s.push_str(&format!(" stood {:.0}s", c.stopped)); }
         crate::write_cstr(&s, buf, cap)
+    })
+}
+
+/// The platform side of `[busstop]` object `id` (its 6th string, as OMSI reads it: 0 right, 1 the other, 2
+/// both) for the timetable buses placed after this call.
+#[unsafe(no_mangle)]
+pub extern "C" fn oo_traffic_stop_side(t: *mut OoTraffic, id: i64, side: f32) {
+    with_t(t, (), |t| {
+        t.stop_sides.insert(id, if side.is_finite() { side.clamp(0.0, 2.0) } else { 0.0 });
     })
 }

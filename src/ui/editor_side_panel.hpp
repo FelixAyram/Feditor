@@ -429,8 +429,10 @@ struct EditorSidePanelImGuiState {
     int ai_traffic_cars = 80;
     bool show_ai_bus_list = false;     // Vista > Lista buses IA
     bool follow_ai_bus = false;        // Vista > Seguir bus IA: the camera on a random timetable bus
+    bool drive_ai_bus = false;         // Herramientas > Drive AI bus: the player's bus driven by the bus AI
     bool show_carpark_helpers = false; // Vista > Show carpark: the entrypoint / carpark helper boxes
     bool parked_cars_on = true; // Vista > Autos estacionados ([carpark_p] spaces, parklist_p.txt)
+    bool show_onlyeditor_objects = true; // Vista > Objetos onlyeditor: [onlyeditor] .sco and entrypoints
     float timezone_h = 1.f;
     int weather_id = 0;
     bool show_sun_shadows = true;

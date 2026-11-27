@@ -501,16 +501,40 @@ pub extern "C" fn oo_key(bus: *mut OoBus, action: *const c_char, pressed: i32) {
             b.axes.set(a, pressed);
             return;
         }
+        // Inputs/keyboard.cfg names some actions as no script does (openOMSI player.rs ACTION_ALIASES): the
+        // indicators are `kw_blinker_*` in every stock bus while the key file says `blinker_left_set`; the
+        // original tries these triggers in turn. Without, the indicators, the hazards and the parking brake
+        // key did nothing.
+        const ALIASES: &[(&str, &[&str])] = &[
+            ("blinker_left_set", &["kw_blinker_links", "blinker_links", "cp_blinker_links"]),
+            ("blinker_right_set", &["kw_blinker_rechts", "blinker_rechts", "cp_blinker_rechts"]),
+            ("blinker_off", &["kw_blinker_aus", "blinker_aus", "cp_blinker_aus"]),
+            ("blinker_warn_toggle", &["kw_blinker_warn", "blinker_warn", "cp_warnblinker_toggle"]),
+            ("parking_brake_toggle", &["parking_brake_mouse", "cp_feststellbremse_toggle"]),
+        ];
+        let own = b.v.ty.program.trigger(name).is_some();
+        let aliases = ALIASES.iter().find(|(a, _)| a.eq_ignore_ascii_case(name)).map(|(_, l)| *l).unwrap_or(&[]);
         if pressed {
             if !b.held.iter().any(|h| h.eq_ignore_ascii_case(name)) {
                 b.held.push(name.to_string());
             }
-            if !b.v.trigger(name) {
+            if !b.v.trigger(name) && !aliases.iter().any(|a| b.v.trigger(a)) {
                 say(0, &format!("action {name}: no such trigger in this bus"));
             }
         } else {
             b.held.retain(|h| !h.eq_ignore_ascii_case(name));
-            b.v.trigger(&format!("{name}_off"));
+            if own {
+                b.v.trigger(&format!("{name}_off"));
+            } else {
+                // (the `_off` of the alias that took the press; an own trigger releases with its own `_off`
+                //  only - an alias's would undo it, openOMSI #420)
+                for a in aliases {
+                    if b.v.ty.program.trigger(a).is_some() {
+                        b.v.trigger(&format!("{a}_off"));
+                        break;
+                    }
+                }
+            }
         }
     })
 }
@@ -520,6 +544,15 @@ pub extern "C" fn oo_key(bus: *mut OoBus, action: *const c_char, pressed: i32) {
 #[unsafe(no_mangle)]
 pub extern "C" fn oo_autostart(bus: *mut OoBus) {
     with_bus(bus, (), |b| {
+        // A start already under way (or re-cranking / checking that the engine holds) carries on: pressed
+        // again meanwhile, a new StartUp saw the power on and the engine catching and switched the bus OFF -
+        // "sometimes it does not start". Only one going on for long (20 s: a bus whose switches never get
+        // there) is begun again, as openOMSI's player does.
+        let starting = b.startup.as_ref().is_some_and(|s| !s.shutting_down()) && b.startup_t < 20.0;
+        if starting || b.crank_t.is_some() || b.verify_t.is_some() {
+            say(0, "auto-start: already putting the vehicle into service");
+            return;
+        }
         b.autostart_tries = 0;
         begin_startup(b);
     })

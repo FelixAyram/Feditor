@@ -58,6 +58,10 @@ struct MaterialDrawBatch {
     float alpha_scale = 1.f;
     bool is_text_texture = false;
     int text_texture_index = -1;
+    // its text SRV slot is its own (a loaded mesh's unique slot); a clone's copy shares the prototype's until its
+    // first text is drawn, then takes one of its own - pooled: back to text_slot_free when the clone goes
+    bool text_slot_own = true;
+    bool text_slot_pooled = false;
     bool is_freetex = false;
     std::string freetex_key;
     std::string original_albedo; // O3D embedded filename — restore after [matl_change]
@@ -206,7 +210,8 @@ struct GpuMeshChunk {
         std::vector<float> last;
     };
     std::shared_ptr<SkinRing> skin;
-    bool editor_helper = false; // entrypoint / carpark box: drawn only while show_editor_helpers
+    std::uint8_t editor_helper = 0; // helper kinds (1 [onlyeditor] / entrypoint, 2 carpark box): drawn only while
+                                    // every kind it has is shown (editor_helper_mask)
     bool want_visible = true;   // what set_chunk_visible asked for (the helper switch masks it)
     bool split_blend = false;  // vehicle: [matl_alpha] 2 drawn as a solid core with depth + its glass blended
     bool path_rail = false;    // editor path rail: drawn after the scene, pulled over the ground (never sinks)
@@ -661,6 +666,10 @@ VSOut vs_terrain_under(VSIn vin, uint iid : SV_InstanceID) { return vs_core(vin,
 VSOut vs_terrain(VSIn vin, uint iid : SV_InstanceID) { return vs_core(vin, iid, -0.002); }
 VSOut vs_spline(VSIn vin, uint iid : SV_InstanceID) { return vs_core(vin, iid, 0.0); }
 VSOut vs_rail(VSIn vin, uint iid : SV_InstanceID) { return vs_core(vin, iid, 0.06); }
+// OMSI vehicle ground shadow ([isshadow] shadow.o3d, Shadow_car.tga): a flat quad at the wheels' contact
+// height, which is the road's own height - drawn 5 cm up so it never fights the road (Omsi.exe draws it with
+// noZcheck; the depth test stays on here so walls and kerbs in front still cover it).
+VSOut vs_vehshadow(VSIn vin, uint iid : SV_InstanceID) { return vs_core(vin, iid, 0.05); }
 // openOMSI tex_address: pass UVs through; hardware WRAP (s0) / CLAMP (s2) does addressing.
 float4 ps_main(VSOut pin) : SV_TARGET {
     if (gMaterialMode > 3.5 && gMaterialMode < 4.5) {
@@ -1734,7 +1743,7 @@ struct HelloO3dRenderer::Impl {
     std::map<std::string, std::uint32_t> texture_slot_cache;
     // set_chunk_freetex_variant: "<base slot>|<texture>" -> its descriptor table
     std::unordered_map<std::string, D3D12_GPU_DESCRIPTOR_HANDLE> freetex_variants;
-    bool show_editor_helpers = true; // Vista > Show carpark
+    std::uint8_t editor_helper_mask = 0xFF; // helper kinds shown (Vista > objetos onlyeditor / Show carpark)
     // a variant texture: the slot it went up to (~0u: none to read), and the ones a worker still decodes
     std::unordered_map<std::string, std::uint32_t> variant_tex_slot;
     std::unordered_map<std::string, std::shared_ptr<void>> variant_jobs;
@@ -1743,6 +1752,7 @@ struct HelloO3dRenderer::Impl {
     std::uint64_t variant_upload_frame = ~0ull; // variant_frame of the last variant texture uploaded
     std::uint32_t srv_stride = 0;
     std::uint32_t srv_next = 1;
+    std::vector<std::uint32_t> text_slot_free; // slot pairs of released clones' text textures (AI buses' displays)
     bool srv_exhausted_logged = false;
     UINT64 fence_value = 1;
     UINT64 pending_tex_upload_fence = 0;

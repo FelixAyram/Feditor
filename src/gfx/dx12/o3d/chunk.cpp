@@ -166,18 +166,22 @@ void HelloO3dRenderer::set_scene_night_wind(float night_blend, float wind_x_ms, 
     impl_->wind_y = wind_y_ms;
 }
 
-void HelloO3dRenderer::set_chunk_editor_helper(std::size_t chunk_index, bool on) {
+void HelloO3dRenderer::set_chunk_editor_helper(std::size_t chunk_index, std::uint8_t kinds) {
     if (!impl_ || chunk_index >= impl_->mesh_chunks.size()) return;
     auto& chunk = impl_->mesh_chunks[chunk_index];
-    if (chunk.editor_helper == on) return;
+    if (chunk.editor_helper == kinds) return;
     const bool want = chunk.meta.visible || (chunk.editor_helper && chunk.want_visible);
-    chunk.editor_helper = on;
+    chunk.editor_helper = kinds;
     set_chunk_visible(chunk_index, want);
 }
 
-void HelloO3dRenderer::set_show_editor_helpers(bool on) {
-    if (!impl_ || impl_->show_editor_helpers == on) return;
-    impl_->show_editor_helpers = on;
+std::uint8_t HelloO3dRenderer::chunk_editor_helper(std::size_t chunk_index) const {
+    return impl_ && chunk_index < impl_->mesh_chunks.size() ? impl_->mesh_chunks[chunk_index].editor_helper : 0;
+}
+
+void HelloO3dRenderer::set_editor_helper_mask(std::uint8_t shown_kinds) {
+    if (!impl_ || impl_->editor_helper_mask == shown_kinds) return;
+    impl_->editor_helper_mask = shown_kinds;
     for (std::size_t i = 0; i < impl_->mesh_chunks.size(); ++i)
         if (impl_->mesh_chunks[i].editor_helper) set_chunk_visible(i, impl_->mesh_chunks[i].want_visible);
     scene_dirty(*impl_, "editor_helpers");
@@ -187,7 +191,7 @@ void HelloO3dRenderer::set_chunk_visible(std::size_t chunk_index, bool visible) 
     if (!impl_ || chunk_index >= impl_->mesh_chunks.size()) return;
     auto& chunk = impl_->mesh_chunks[chunk_index];
     chunk.want_visible = visible;
-    if (chunk.editor_helper && !impl_->show_editor_helpers) visible = false;
+    if (chunk.editor_helper & ~impl_->editor_helper_mask) visible = false;
     if (chunk.meta.visible == visible) return;
     // Netted per frame (populate): editor passes hide and show the same chunk within one frame.
     if (impl_->vis_touched.insert(chunk_index).second) impl_->vis_before.emplace_back(chunk_index, !visible);
@@ -244,6 +248,13 @@ void HelloO3dRenderer::release_chunk_gpu(std::size_t chunk_index) {
     if (impl_) scene_dirty(*impl_, "release_chunk_gpu");
     if (!impl_ || chunk_index >= impl_->mesh_chunks.size()) return;
     auto& chunk = impl_->mesh_chunks[chunk_index];
+    // (a clone's own text slots go back to the pool for the next AI bus)
+    for (auto* list : {&chunk.opaque_batches, &chunk.alpha_batches, &chunk.alpha_nozwrite_batches, &chunk.shadow_batches})
+        for (auto& b : *list)
+            if (b.is_text_texture && b.text_slot_pooled && b.srv_slot != ~0u) {
+                impl_->text_slot_free.push_back(b.srv_slot);
+                b.text_slot_pooled = false;
+            }
     chunk.meta.visible = false;
     chunk.vertex_buffer.Reset();
     chunk.index_buffer.Reset();
@@ -459,6 +470,25 @@ bool HelloO3dRenderer::replace_chunk_albedo_rgba(std::size_t chunk_index, const 
     bool any = false;
     for (auto* batch : targets) {
         std::uint32_t slot = batch->srv_slot;
+        if (!batch->text_slot_own) {
+            // a clone's display: a slot pair of its own (pooled), never the prototype's shared one
+            if (!d.text_slot_free.empty()) {
+                slot = d.text_slot_free.back();
+                d.text_slot_free.pop_back();
+            } else {
+                if (d.srv_next + 2u > kSrvDescriptorCount) continue;
+                slot = d.srv_next;
+                d.srv_next += 2;
+                d.device->CopyDescriptorsSimple(
+                    1,
+                    offset_cpu_handle(d.srv_heap->GetCPUDescriptorHandleForHeapStart(), d.srv_stride,
+                                      kCbvDescriptorCount + slot + 1),
+                    white_srv_cpu, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            }
+            batch->srv_slot = slot;
+            batch->text_slot_own = true;
+            batch->text_slot_pooled = true;
+        }
         if (slot == ~0u) {
             if (d.srv_next + 2u > kSrvDescriptorCount) continue;
             slot = d.srv_next;
@@ -1237,13 +1267,21 @@ std::optional<std::size_t> HelloO3dRenderer::clone_chunk(std::size_t src_chunk_i
     clone.meta.visible = true;
     // (the helper mark is the instance's, not the mesh's: a carpark box that was the first of its mesh hid every
     //  ordinary object cloned from it while Show carpark was off)
-    clone.editor_helper = false;
+    clone.editor_helper = 0;
     clone.want_visible = true;
     // Pick mesh is identical in local space; sharing via empty + AABB fallback (pick.cpp)
     // avoids duplicating megabytes of pick_positions per instance (RAM climb on stream).
     clone.pick_positions.clear();
     clone.pick_indices.clear();
     if (clone.pick_src == static_cast<std::size_t>(-1)) clone.pick_src = src_chunk_index;
+    // (its displays: drawn into slots of its own on the first replace_chunk_albedo_rgba - every AI bus of a type
+    //  showed the last one's destination otherwise)
+    for (auto* list : {&clone.opaque_batches, &clone.alpha_batches, &clone.alpha_nozwrite_batches, &clone.shadow_batches})
+        for (auto& b : *list)
+            if (b.is_text_texture) {
+                b.text_slot_own = false;
+                b.text_slot_pooled = false;
+            }
     XMStoreFloat4x4(&clone.local_world_transposed, DirectX::XMMatrixIdentity());
     impl_->mesh_chunks.push_back(std::move(clone));
     return impl_->mesh_chunks.size() - 1;

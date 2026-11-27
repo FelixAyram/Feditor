@@ -118,6 +118,10 @@ Dx12Texture upload_bc_texture(ID3D12Device* device, ID3D12GraphicsCommandList* c
 [[nodiscard]] bool dds_file_needs_cpu_mips(const std::filesystem::path& path);
 
 [[nodiscard]] std::optional<CpuRgbaImage> load_tga_cpu(const std::filesystem::path& path);
+// 32-bit uncompressed BMP with its alpha channel (WIC reads those as BGR, alpha 255; D3DX - so Omsi.exe - keeps
+// the alpha: OMSI cars hold the [matl_envmap] mask there). nullopt for any other BMP, or when every alpha byte is
+// 0 (a BMP saved with an empty channel is opaque, not invisible).
+[[nodiscard]] std::optional<CpuRgbaImage> load_bmp32_alpha_cpu(const std::filesystem::path& path);
 [[nodiscard]] std::shared_ptr<const CpuRgbaImage> cpu_texture_cache_take(const std::filesystem::path& path);
 void cpu_texture_cache_put(const std::filesystem::path& path, CpuRgbaImage image);
 void cpu_texture_cache_invalidate(const std::filesystem::path& path);

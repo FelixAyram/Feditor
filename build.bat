@@ -10,7 +10,7 @@ if not exist third_party\openOMSI\Cargo.toml (
     echo Fetching the openOMSI submodule...
     git submodule update --init --recursive || exit /b 1
 )
-rem Feditor patches on top of the pinned openOMSI commit (AI timetable traffic); skipped when already applied
+rem Feditor patches on top of the pinned openOMSI commit (AI traffic, timetable, key aliases); skipped when already applied
 for %%p in (ffi\openomsi_patches\*.patch) do (
     git -C third_party\openOMSI apply --check "%%~fp" 2>nul && git -C third_party\openOMSI apply "%%~fp"
 )

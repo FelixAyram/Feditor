@@ -4998,6 +4998,13 @@ void build_map_editor_imgui_ui(const MapEditorImGuiArgs& args) {
                 // the timetable buses under way (AI traffic): Seguir / Conducir per bus
                 if (ImGui::MenuItem(i18n::tr_lit("Buses IA (horario)…"), nullptr, panel.imgui_state().show_ai_bus_list))
                     panel.imgui_state().show_ai_bus_list = !panel.imgui_state().show_ai_bus_list;
+                // the player's bus driven as an AI bus: its trip (the one selected in Tracks/Trips) stop by stop, else
+                // the track under it, else the paths (as P); off: back to the driver
+                if (ImGui::MenuItem(i18n::tr_lit("Drive AI bus"), nullptr, panel.imgui_state().drive_ai_bus))
+                    panel.imgui_state().drive_ai_bus = !panel.imgui_state().drive_ai_bus;
+                if (ImGui::IsItemHovered())
+                    ImGui::SetTooltip("%s", i18n::tr_lit("El bus del jugador lo maneja la IA: sigue el trip seleccionado "
+                                                         "(paradas, semaforos), o el track / los paths bajo el bus."));
                 ImGui::Separator();
                 {
                     const bool same_ok = !args.group_same_name.empty() &&
@@ -5170,6 +5177,10 @@ void build_map_editor_imgui_ui(const MapEditorImGuiArgs& args) {
                                                      &st.hide_onlyeditor_splines);
                     vista_changed |= ImGui::MenuItem(i18n::tr_lit("Punto en el origen del .sco seleccionado"), nullptr,
                                                      &st.show_sco_origin);
+                    vista_changed |= ImGui::MenuItem(i18n::tr_lit("Objetos onlyeditor"), nullptr, &st.show_onlyeditor_objects);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", i18n::tr_lit("Los objetos [onlyeditor] (entrypoints, ayudas del editor). "
+                                                             "No afecta a los autos del car park real."));
                     vista_changed |= ImGui::MenuItem(i18n::tr_lit("Car park real"), nullptr, &st.parked_cars_on);
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("%s", i18n::tr_lit("Activado: un auto real de la parklist en cada [carpark_p], "
@@ -5286,7 +5297,11 @@ void build_map_editor_imgui_ui(const MapEditorImGuiArgs& args) {
                     vista_changed |= ImGui::Checkbox(i18n::tr_lit("Car park real"), &st.parked_cars_on);
                     vista_changed |= ImGui::Checkbox(i18n::tr_lit("Show carpark"), &st.show_carpark_helpers);
                     if (ImGui::IsItemHovered())
-                        ImGui::SetTooltip("%s", i18n::tr_lit("Las cajas de ayuda de los estacionamientos [carpark_p] y entrypoints."));
+                        ImGui::SetTooltip("%s", i18n::tr_lit("Las cajas de ayuda de los estacionamientos [carpark_p] junto a los autos reales."));
+                    vista_changed |= ImGui::Checkbox(i18n::tr_lit("Objetos onlyeditor"), &st.show_onlyeditor_objects);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", i18n::tr_lit("Los objetos [onlyeditor] (entrypoints, ayudas del editor). "
+                                                             "No afecta a los autos del car park real."));
                     ImGui::Checkbox(i18n::tr_lit("Seguir bus IA"), &st.follow_ai_bus);
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("%s", i18n::tr_lit("La camara sigue a un bus de servicio al azar (horario del mapa)."));

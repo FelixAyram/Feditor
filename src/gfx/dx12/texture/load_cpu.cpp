@@ -107,6 +107,49 @@ std::optional<CpuRgbaImage> load_dds_cpu(const std::filesystem::path& path) {
 
 } // namespace
 
+namespace texture_detail {
+std::optional<CpuRgbaImage> load_bmp32_alpha_cpu(const std::filesystem::path& path) {
+    std::vector<std::uint8_t> b;
+    if (!read_file_bytes(path, b) || b.size() < 54u || b[0] != 'B' || b[1] != 'M') return std::nullopt;
+    auto u16 = [&](std::size_t o) { return static_cast<std::uint32_t>(b[o] | (b[o + 1] << 8)); };
+    auto u32 = [&](std::size_t o) { return u16(o) | (u16(o + 2) << 16); };
+    const std::uint32_t off = u32(10), hdr = u32(14), bpp = u16(28), comp = u32(30);
+    const std::int32_t w = static_cast<std::int32_t>(u32(18)), h_raw = static_cast<std::int32_t>(u32(22));
+    if (hdr < 40u || bpp != 32u || w <= 0 || h_raw == 0 || w > 16384) return std::nullopt;
+    // channel masks: BI_RGB = B G R A bytes; BI_BITFIELDS / ALPHABITFIELDS with the usual BGRA masks only
+    if (comp == 3u || comp == 6u) {
+        if (b.size() < 54u + 12u) return std::nullopt;
+        const std::uint32_t rm = u32(54), gm = u32(58), bm = u32(62);
+        if (rm != 0x00FF0000u || gm != 0x0000FF00u || bm != 0x000000FFu) return std::nullopt;
+    } else if (comp != 0u) {
+        return std::nullopt;
+    }
+    const bool top_down = h_raw < 0;
+    const std::uint32_t h = static_cast<std::uint32_t>(top_down ? -h_raw : h_raw);
+    if (h > 16384u) return std::nullopt;
+    const std::size_t stride = static_cast<std::size_t>(w) * 4u;
+    if (off > b.size() || b.size() - off < stride * h) return std::nullopt;
+    CpuRgbaImage out{};
+    out.width = static_cast<std::uint32_t>(w);
+    out.height = h;
+    out.rgba.resize(stride * h);
+    bool any_alpha = false;
+    for (std::uint32_t y = 0; y < h; ++y) {
+        const std::uint8_t* s = b.data() + off + stride * (top_down ? y : h - 1u - y);
+        std::uint8_t* d = out.rgba.data() + stride * y;
+        for (std::int32_t x = 0; x < w; ++x, s += 4, d += 4) {
+            d[0] = s[2];
+            d[1] = s[1];
+            d[2] = s[0];
+            d[3] = s[3];
+            any_alpha |= s[3] != 0;
+        }
+    }
+    if (!any_alpha) return std::nullopt;
+    return out;
+}
+} // namespace texture_detail
+
 std::optional<CpuRgbaImage> load_image_cpu_rgba(const std::filesystem::path& path) {
     if (!is_virtual_path(path)) {
         using F = texture_detail::TexFormat;
@@ -115,6 +158,9 @@ std::optional<CpuRgbaImage> load_image_cpu_rgba(const std::filesystem::path& pat
             if (auto img = load_dds_cpu(path)) return img;
             break;
         case F::bmp:
+            if (auto img = texture_detail::load_bmp32_alpha_cpu(path)) return img;
+            if (auto img = load_wic_cpu(path)) return img;
+            break;
         case F::png:
         case F::jpg:
             if (auto img = load_wic_cpu(path)) return img;

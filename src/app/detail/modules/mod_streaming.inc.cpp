@@ -2497,8 +2497,7 @@
                                 sco->render_priority == sco::ScoRenderPriority::OnSurface);
                             if (sco->render_priority == sco::ScoRenderPriority::Presurface)
                                 renderer.set_chunk_presurface(chunk, true);
-                            if (sco->special == sco::ScoSpecial::EntryPoint || sco->special == sco::ScoSpecial::Carpark)
-                                renderer.set_chunk_editor_helper(chunk, true);
+                            if (const auto hk = sco_helper_kinds(*sco)) renderer.set_chunk_editor_helper(chunk, hk);
                         } else if (matl && matl->presurface) {
                             renderer.set_chunk_presurface(chunk, true);
                         }

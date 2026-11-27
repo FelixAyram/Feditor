@@ -1406,7 +1406,7 @@
                             const bool alt_sel = (GetAsyncKeyState(VK_LMENU) & 0x8000) != 0 ||
                                                  (GetAsyncKeyState(VK_RMENU) & 0x8000) != 0;
                             const bool rmb_sel = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
-                            const bool sel_click = !alt_sel && !rmb_sel && edit_mode == EditMode::None &&
+                            const bool sel_click = !alt_sel && !rmb_sel && !bus_drive_active && edit_mode == EditMode::None &&
                                                    ddx * ddx + ddy * ddy < 36.f;
                             if (sel_click && ddx * ddx + ddy * ddy < 36.f) {
                                 int best_ep = -1;
@@ -1690,7 +1690,8 @@
             autofill_hover_marker = -1;
             autofill_hover_path_marker = -1;
             path_align_hover_marker = -1;
-            if (!over_ui) {
+            // (driving the bus: no hover on objects / splines / paths - the cursor is for the cab's [mouseevent]s)
+            if (!over_ui && !bus_drive_active) {
                 float mx = 0.f, my = 0.f, fw = 1.f, fh = 1.f;
                 input::cursor_to_framebuffer(window, mx, my, fw, fh);
                 const float aspect = (fw > 0.f && fh > 0.f) ? fw / fh : 16.f / 9.f;
@@ -2477,7 +2478,7 @@
                 const auto cam_tile = centerkachel_as_active();
                 std::int32_t hover_gx = -1;
                 std::int32_t hover_gy = -1;
-                if (!over_ui) {
+                if (!over_ui && !bus_drive_active) {
                     float tmx = 0.f, tmy = 0.f, tfw = 1.f, tfh = 1.f;
                     input::cursor_to_framebuffer(window, tmx, tmy, tfw, tfh);
                     if (const auto hit = camera.hit_ground_xy(tmx, tmy, tfw, tfh)) {
@@ -3340,6 +3341,19 @@
                 }
                 {
                     ai_bus_list_window();
+                    // the camera to a timetable bus not on the map yet (Buses IA > Seguir / Conducir): teleported, so
+                    // the streaming loads its tiles and paths and the bus can be put there
+                    if (ai_goto_request) {
+                        map::EntryPoint ep{};
+                        ep.position.x = (*ai_goto_request)[0] + tile_ox;
+                        ep.position.y = (*ai_goto_request)[1] + tile_oy;
+                        ep.position.z = camera.target_z;
+                        ep.position_local = ep.position;
+                        ep.rotation_quat.w = 1.f;
+                        ep.name = "bus IA";
+                        teleport_camera_to_entrypoint(ep, "ai_bus_list");
+                        ai_goto_request.reset();
+                    }
                     // World sound window (self-contained block, see omsi/sound/world_sound_window.hpp).
                     const int ws_flags = omsi::sound::draw_world_sound_window(
                         world_sound_ui, world_sound_scene.candidate_count(), world_sound_scene.live_objects(),
@@ -3473,8 +3487,8 @@
                                     static const char* kAct[] = {"circulando", "acelerando", "frenando", "en cola",
                                                                  "semaforo en rojo", "cediendo el paso", "en la parada",
                                                                  "saliendo / estacionando", "fin del camino",
-                                                                 "esperando sitio a la salida"};
-                                    const int a = s_st.action >= 0 && s_st.action < 10 ? s_st.action : 0;
+                                                                 "esperando sitio a la salida", "detenido"};
+                                    const int a = s_st.action >= 0 && s_st.action < 11 ? s_st.action : 0;
                                     const ImVec4 col = a == 2 || a == 4 ? ImVec4(1.f, 0.45f, 0.35f, 1.f)
                                                        : a == 1           ? ImVec4(0.45f, 1.f, 0.5f, 1.f)
                                                        : a >= 3           ? ImVec4(1.f, 0.85f, 0.3f, 1.f)
@@ -3540,6 +3554,16 @@
                                 oo_traffic_remove_car(ai_traffic, ai_selected_id);
                                 panel.set_status("Auto IA borrado");
                                 open = false;
+                            }
+                            ImGui::SameLine();
+                            // its vehicle folder in Explorer, the .ovh / .bus selected
+                            if (ImGui::Button("Abrir carpeta") && part[0]) {
+                                std::string err;
+                                const HWND owner = panel.hwnd() ? panel.hwnd() : glfwGetWin32Window(window);
+                                if (win32::shell_open_folder_select_file(std::filesystem::u8path(part), owner, &err))
+                                    panel.set_status("Carpeta: " + omsi::path_text(std::filesystem::u8path(part).parent_path().filename()));
+                                else
+                                    panel.set_status("Error carpeta: " + err);
                             }
                             ImGui::SameLine();
                             if (ImGui::Button(ai_follow_id == ai_selected_id ? "Dejar de seguir" : "Seguir")) {
@@ -4100,6 +4124,9 @@
                         }
                         const auto w = omsi::wind::snapshot();
                         renderer.set_scene_night_wind(sky.night_blend, w.dir_x * w.strength_ms, w.dir_y * w.strength_ms);
+                        // (the AI traffic switches its cars' lights on with the street lights: openOMSI's `night`,
+                        //  its AI_Light - at dusk already, as openOMSI does below 3/4 of the daylight)
+                        if (ai_traffic) oo_traffic_set_night(ai_traffic, sky.night_blend > 0.25f ? 1 : 0);
                     }
                     {
                         // Scenery lights at night: the [maplight]s of the placed objects (openOMSI lights the
@@ -4292,7 +4319,10 @@
                             renderer.set_vehicle_coronas(s_corona_buf.data(), static_cast<int>(nco),
                                                          0.35f + 0.65f * sky.night_blend);
                         }
-                        if (sky.night_blend > 0.05f) {
+                        // (the player's headlights light the road whenever they are on - by day too, as in OMSI:
+                        //  Spot_Select >= 0; the AI cars' only at night)
+                        const bool bus_spot_on = omsi_bus && omsi_bus->oo && oo_var(omsi_bus->oo, "Spot_Select", -1.f) >= 0.f;
+                        if (sky.night_blend > 0.05f || bus_spot_on) {
                             constexpr std::size_t kLampCap = 240;
                             s_lamp_buf.resize(kLampCap * 10);
                             std::size_t nlamps = 0;
@@ -4323,38 +4353,40 @@
                                     p.r = q[6] * 0.6f;
                                     p.g = q[7] * 0.6f;
                                     p.b = q[8] * 0.6f;
-                                    p.intensity = sky.night_blend;
+                                    // (by day it needs more to show on sunlit asphalt; at night as before)
+                                    p.intensity = (std::max)(sky.night_blend, 0.75f);
                                     p.interior = -1.f;
                                     s_all_lights.push_back(p);
                                     continue;
                                 }
-                                SceneLightT l{};
-                                l.x = q[0];
-                                l.y = q[1];
-                                l.z = q[2];
-                                // (a lamp's glow: about its own size round it - 3 m spread a red pool round
-                                //  every tail light)
-                                l.range = (std::clamp)(q[9] * 1.6f, 0.35f, 1.3f);
-                                l.r = q[6] * 1.3f;
-                                l.g = q[7] * 1.3f;
-                                l.b = q[8] * 1.3f;
-                                l.intensity = lamp_k;
-                                s_all_lights.push_back(l);
+                                // AI cars, the way driving games light their traffic: the lamps themselves are their
+                                // coronas ([light_enh], set_vehicle_coronas above) and night maps - no scene light per
+                                // lamp (every tail, brake and head lamp of up to 240 lamps in the light grid washed the
+                                // night white and cost ~16 ms of GPU). Only the cars nearest the camera (the lamps come
+                                // nearest car first) throw one dim pool of light on the road ahead of them: one per car,
+                                // forward only, low, short.
                                 const float hl = std::hypot(q[3], q[4]);
                                 const bool head = hl > 0.5f && q[5] > -0.6f && q[6] > 0.6f && q[7] > 0.6f && q[8] > 0.45f;
-                                if (head && pools < 64 && sky.night_blend > 0.05f) {
-                                    SceneLightT p = l;
-                                    p.x = q[0] + q[3] / hl * 7.f;
-                                    p.y = q[1] + q[4] / hl * 7.f;
-                                    p.z = q[2] + 0.4f;
-                                    p.range = 9.f;
-                                    p.r = q[6] * 0.55f;
-                                    p.g = q[7] * 0.55f;
-                                    p.b = q[8] * 0.55f;
-                                    p.intensity = sky.night_blend;
-                                    s_all_lights.push_back(p);
-                                    ++pools;
+                                constexpr int kAiPools = 4;
+                                if (!head || pools >= kAiPools || sky.night_blend <= 0.05f) continue;
+                                const float px = q[0] + q[3] / hl * 9.f, py = q[1] + q[4] / hl * 9.f;
+                                bool same_car = false; // (its other headlight: one pool between them is enough)
+                                for (int pi = 0; pi < pools && !same_car; ++pi) {
+                                    const auto& o = s_all_lights[s_all_lights.size() - 1 - static_cast<std::size_t>(pi)];
+                                    same_car = (o.x - px) * (o.x - px) + (o.y - py) * (o.y - py) < 2.5f * 2.5f;
                                 }
+                                if (same_car) continue;
+                                SceneLightT p{};
+                                p.x = px;
+                                p.y = py;
+                                p.z = q[2] - 0.3f;
+                                p.range = 7.f;
+                                p.r = q[6] * 0.32f;
+                                p.g = q[7] * 0.32f;
+                                p.b = q[8] * 0.30f;
+                                p.intensity = lamp_k;
+                                s_all_lights.push_back(p);
+                                ++pools;
                             }
                         }
                         for (const auto& l : s_obj_lights) {
