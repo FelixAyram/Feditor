@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Editar un mapa de OMSI 2 con amigos — modo cooperativo de Feditor</title>
+<meta name="description" content="Cómo editar el mismo mapa de OMSI 2 entre varias personas a la vez con Feditor: crear sala, invitar por red local o por internet (túnel automático de Cloudflare, sin abrir puertos) y unirse con un código.">
+<meta name="robots" content="index, follow, max-snippet:-1">
+<link rel="canonical" href="https://felixayram.github.io/Feditor/cooperativo.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Editar un mapa de OMSI 2 con amigos — cooperativo de Feditor">
+<meta property="og:description" content="Varias personas editando el mismo mapa de OMSI 2 en vivo, por LAN o internet.">
+<meta property="og:url" content="https://felixayram.github.io/Feditor/cooperativo.html">
+<meta property="og:locale" content="es_ES">
+<meta name="theme-color" content="#0d1117">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230d1117'/%3E%3Cpath d='M18 16h28v8H26v8h16v8H26v12h-8z' fill='%232f81f7'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="site.css">
+</head>
+<body>
+<header><div class="wrap">
+  <div class="brand">F<span>editor</span></div>
+  <nav><a href="index.html">Inicio</a><a href="guia-instalacion.html">Instalar</a><a href="editar-mapa-omsi-2.html">Editar un mapa</a><a href="cooperativo.html">Cooperativo</a><a href="https://github.com/FelixAyram/Feditor">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+<article>
+<h1>Editar un mapa de OMSI 2 con amigos (cooperativo)</h1>
+<p class="lead">Feditor permite que <strong>varias personas editen el mismo mapa de OMSI 2 al mismo
+tiempo</strong>, cada una en su PC, viendo en vivo lo que hacen las demás. Funciona en red local y
+también por internet, sin abrir puertos en el router.</p>
+
+<h2>Antes de empezar</h2>
+<ul>
+  <li>Todos necesitan <strong>Feditor</strong> y <strong>OMSI 2</strong> con <strong>el mismo mapa y los
+      mismos objetos</strong>. Para pasarlos, usá <em>Archivo → Empaquetar mapa (.zip)…</em>.</li>
+  <li>La primera vez Feditor te explica el modo cooperativo y pide permiso de red; Windows va a
+      preguntar si permitís el acceso: elegí <strong>Permitir</strong>.</li>
+</ul>
+
+<h2>Crear la sala (anfitrión)</h2>
+<ol>
+  <li>Abrí el mapa en modo edición.</li>
+  <li>En el panel lateral, pestaña <strong>Sesión</strong> → <strong>Crear sala</strong> →
+      <strong>Invitar</strong>.</li>
+  <li>Elegí cómo se conectan tus amigos:
+    <ul>
+      <li><strong>Solo red local</strong>: misma casa o LAN, o una VPN tipo Radmin, ZeroTier o Tailscale.</li>
+      <li><strong>Online (internet)</strong>: amigos en otras casas. Feditor arma solo un túnel seguro de
+          Cloudflare; la primera vez tarda unos segundos mientras se prepara.</li>
+    </ul>
+  </li>
+  <li>Tocá <strong>Copiar código</strong> y pasáselo a tus amigos.</li>
+</ol>
+
+<h2>Unirse (invitados)</h2>
+<ol>
+  <li>Pestaña <strong>Sesión</strong> → pegá el código en <strong>Unirse con un código</strong> →
+      <strong>Unirse</strong>.</li>
+</ol>
+
+<h2>Preguntas frecuentes del cooperativo</h2>
+<table>
+  <thead><tr><th>Pregunta</th><th>Respuesta</th></tr></thead>
+  <tbody>
+    <tr><td>¿Hay que abrir puertos en el router?</td><td>No: con <em>Online (internet)</em> el túnel es automático.</td></tr>
+    <tr><td>Mi amigo no se puede unir</td><td>Usá <em>Online (internet)</em> si no están en la misma red y revisá que los dos aceptaron el permiso de red.</td></tr>
+    <tr><td>¿Veo los cambios en vivo?</td><td>Sí, cada persona ve lo que hacen las demás mientras editan.</td></tr>
+    <tr><td>¿Aparecen objetos faltantes?</td><td>Pasa cuando no tienen los mismos objetos: pasales el mapa empaquetado en <code>.zip</code>.</td></tr>
+  </tbody>
+</table>
+<p><a class="cta" href="https://github.com/FelixAyram/Feditor/releases/latest">⬇️ Descargar Feditor gratis</a></p>
+
+<h2>Seguí con</h2>
+<ul>
+  <li><a href="guia-instalacion.html">Instalar Feditor paso a paso</a></li>
+  <li><a href="editar-mapa-omsi-2.html">Cómo editar un mapa de OMSI 2 paso a paso</a></li>
+</ul>
+</article>
+</main>
+<footer><div class="wrap">
+  Feditor es software libre (AGPL-3.0). OMSI y OMSI 2 son marcas de MR Software / Aerosoft; este es un
+  proyecto independiente de la comunidad. · <a href="https://github.com/FelixAyram/Feditor">GitHub</a>
+</div></footer>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Editar un mapa de OMSI 2 con amigos en cooperativo",
+  "description": "Crear una sala cooperativa en Feditor, invitar por red local o por internet y unirse con un código para editar el mismo mapa de OMSI 2 en vivo.",
+  "tool": [{"@type": "HowToTool", "name": "Feditor"}],
+  "step": [
+    {"@type": "HowToStep", "name": "Permiso de red", "text": "Aceptar el permiso de red de Windows la primera vez."},
+    {"@type": "HowToStep", "name": "Crear sala", "text": "En la pestaña Sesión, elegir Crear sala y luego Invitar."},
+    {"@type": "HowToStep", "name": "Elegir conexión", "text": "Solo red local (LAN o VPN) u Online por internet con el túnel automático de Cloudflare."},
+    {"@type": "HowToStep", "name": "Compartir el código", "text": "Copiar el código de sala y enviarlo a los amigos."},
+    {"@type": "HowToStep", "name": "Unirse", "text": "Los invitados pegan el código en Unirse con un código y tocan Unirse."}
+  ]
+}
+</script>
+</body>
+</html>
