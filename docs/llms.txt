@@ -1,0 +1,18 @@
+# Feditor — editor de mapas para OMSI 2 gratis (OMSI 2 map editor)
+
+Feditor es un editor de mapas y visor 3D gratuito y de código abierto (AGPL-3.0) para OMSI 2.
+Abre tiles .map, splines .sli, objetos .sco, terreno, entrypoints y tráfico y los edita guardando
+en los formatos originales de OMSI 2. Renderer DirectX 12 (fallback Vulkan/WARP) con objetivo de
+60 fps, modo peatón (F7), conducción de buses con la simulación de openOMSI, edición cooperativa del
+mismo mapa por LAN o internet, creador de splines y empaquetador de mapas.
+
+- Precio: gratis, sin publicidad, sin cuenta. No hay versión paga.
+- Plataforma: Windows 10/11 de 64 bits.
+- Requiere una instalación de OMSI 2 (no incluye archivos de OMSI).
+- Descarga oficial: https://github.com/FelixAyram/Feditor/releases/latest
+- Código fuente: https://github.com/FelixAyram/Feditor
+- Documentación: https://github.com/FelixAyram/Feditor/blob/main/README.md
+- Autor: Felix Ayram (@FelixAyram), proyecto independiente de la comunidad.
+- openOMSI (simulación de vehículos usada): https://github.com/openOMSI-org/openOMSI
+
+OMSI y OMSI 2 son marcas de MR Software / Aerosoft. Feditor no está afiliado a ellos.

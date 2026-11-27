@@ -11,6 +11,7 @@ cooperativo con amigos**.
 > descarga oficial está en [Releases](https://github.com/FelixAyram/Feditor/releases).
 
 **[⬇️ Descargar la última versión](https://github.com/FelixAyram/Feditor/releases/latest)** ·
+**[🌐 Página oficial](https://felixayram.github.io/Feditor/)** ·
 [English below](#english) · [Preguntas frecuentes](#preguntas-frecuentes) ·
 [Problemas comunes](#problemas-comunes)
 
@@ -277,6 +278,13 @@ comunidad: no está afiliado, aprobado ni patrocinado por ellos.
 
 Hecho por **Felix** ([@FelixAyram](https://github.com/FelixAyram)). Si te sirve, dejale una ⭐ al
 repositorio: ayuda a que más gente de la comunidad de OMSI lo encuentre.
+
+## Enlaces
+
+- **Página oficial / Official site:** <https://felixayram.github.io/Feditor/>
+- **Descargas:** <https://github.com/FelixAyram/Feditor/releases>
+- **Problemas:** <https://github.com/FelixAyram/Feditor/issues>
+- **openOMSI:** <https://github.com/openOMSI-org/openOMSI>
 
 ---
 

@@ -1,0 +1,16 @@
+# Feditor — editor de mapas para OMSI 2 (sitio oficial)
+User-agent: *
+Allow: /
+Disallow: /404.html
+
+# Rastreadores de IA: permitidos (contenido público y descriptivo)
+User-agent: GPTBot
+Allow: /
+
+User-agent: ClaudeBot
+Allow: /
+
+User-agent: PerplexityBot
+Allow: /
+
+Sitemap: https://felixayram.github.io/Feditor/sitemap.xml
