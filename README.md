@@ -302,6 +302,8 @@ with friends in co-op**.
 
 ### Download
 
+Official site / guides (English and Spanish): <https://felixayram.github.io/Feditor/en/>
+
 1. Get `Feditor-<version>.zip` from **[Releases](https://github.com/FelixAyram/Feditor/releases/latest)**.
 2. Unzip it anywhere you can write to (e.g. `C:\Games\Feditor`).
 3. Run **`omsi_f4_viewer.exe`**. Nothing else to install — the zip ships the Visual C++ runtime and
