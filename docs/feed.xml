@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xml:lang="es">
+  <title>Feditor — versiones (editor de mapas para OMSI 2 gratis)</title>
+  <subtitle>Nuevas versiones de Feditor, el editor de mapas y visor 3D gratuito para OMSI 2.</subtitle>
+  <link rel="alternate" href="https://felixayram.github.io/Feditor/"/>
+  <link rel="self" href="https://felixayram.github.io/Feditor/feed.xml"/>
+  <id>https://felixayram.github.io/Feditor/</id>
+  <updated>2026-11-27T15:47:42Z</updated>
+  <author><name>Felix Ayram</name><uri>https://github.com/FelixAyram</uri></author>
+  <rights>AGPL-3.0</rights>
+  <icon>https://felixayram.github.io/Feditor/assets/og-image.png</icon>
+  <entry>
+    <title>Feditor 0.68</title>
+    <link rel="alternate" href="https://github.com/FelixAyram/Feditor/releases/tag/v0.68"/>
+    <id>https://github.com/FelixAyram/Feditor/releases/tag/v0.68</id>
+    <updated>2026-11-27T15:47:42Z</updated>
+    <summary>Descarga de Feditor 0.68. Editor de mapas y visor 3D gratis para OMSI 2 (OMSI 2 map editor): DirectX 12, 60 fps, modo peatón, bus con física openOMSI, cooperativo y empaquetador de mapas.</summary>
+  </entry>
+  <entry>
+    <title>Feditor 0.67</title>
+    <link rel="alternate" href="https://github.com/FelixAyram/Feditor/releases/tag/v0.67"/>
+    <id>https://github.com/FelixAyram/Feditor/releases/tag/v0.67</id>
+    <updated>2026-11-21T08:11:02Z</updated>
+    <summary>Descarga de Feditor 0.67. Editor de mapas y visor 3D gratis para OMSI 2 (OMSI 2 map editor): DirectX 12, 60 fps, modo peatón, bus con física openOMSI, cooperativo y empaquetador de mapas.</summary>
+  </entry>
+  <entry>
+    <title>Feditor 0.66 — gratis, descomprimir y usar</title>
+    <link rel="alternate" href="https://github.com/FelixAyram/Feditor/releases/tag/v0.66"/>
+    <id>https://github.com/FelixAyram/Feditor/releases/tag/v0.66</id>
+    <updated>2026-11-21T01:50:34Z</updated>
+    <summary>Descarga de Feditor 0.66 — gratis, descomprimir y usar. Editor de mapas y visor 3D gratis para OMSI 2 (OMSI 2 map editor): DirectX 12, 60 fps, modo peatón, bus con física openOMSI, cooperativo y empaquetador de mapas.</summary>
+  </entry>
+  <entry>
+    <title>Feditor 0.65</title>
+    <link rel="alternate" href="https://github.com/FelixAyram/Feditor/releases/tag/v0.65"/>
+    <id>https://github.com/FelixAyram/Feditor/releases/tag/v0.65</id>
+    <updated>2026-11-20T22:29:19Z</updated>
+    <summary>Descarga de Feditor 0.65. Editor de mapas y visor 3D gratis para OMSI 2 (OMSI 2 map editor): DirectX 12, 60 fps, modo peatón, bus con física openOMSI, cooperativo y empaquetador de mapas.</summary>
+  </entry>
+  <entry>
+    <title>Feditor 0.64</title>
+    <link rel="alternate" href="https://github.com/FelixAyram/Feditor/releases/tag/v0.64"/>
+    <id>https://github.com/FelixAyram/Feditor/releases/tag/v0.64</id>
+    <updated>2026-11-20T18:39:44Z</updated>
+    <summary>Descarga de Feditor 0.64. Editor de mapas y visor 3D gratis para OMSI 2 (OMSI 2 map editor): DirectX 12, 60 fps, modo peatón, bus con física openOMSI, cooperativo y empaquetador de mapas.</summary>
+  </entry>
+  <entry>
+    <title>Feditor 0.63</title>
+    <link rel="alternate" href="https://github.com/FelixAyram/Feditor/releases/tag/v0.63"/>
+    <id>https://github.com/FelixAyram/Feditor/releases/tag/v0.63</id>
+    <updated>2026-11-20T18:21:03Z</updated>
+    <summary>Descarga de Feditor 0.63. Editor de mapas y visor 3D gratis para OMSI 2 (OMSI 2 map editor): DirectX 12, 60 fps, modo peatón, bus con física openOMSI, cooperativo y empaquetador de mapas.</summary>
+  </entry>
+</feed>
