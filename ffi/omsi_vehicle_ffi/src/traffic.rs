@@ -33,6 +33,12 @@ pub struct OoTraffic {
     light_of_object: std::collections::HashMap<i64, usize>,
     /// the editor's bus as the traffic sees it (front section box), see oo_traffic_set_bus
     player: Option<omsi_sim::ai_traffic::model::PlayerBox>,
+    /// the map's timetable buses: the vehicles of its ailists groups with a .hof or a depot (read on first use)
+    map_dir: PathBuf,
+    service_files: Option<Vec<String>>,
+    service_types: std::collections::HashMap<String, Arc<VehicleType>>,
+    /// the editor camera's view (direction x y z, vertical fov in degrees, aspect), see oo_traffic_set_view
+    view: Option<([f64; 3], f32, f64)>,
 }
 
 #[repr(C)]
@@ -61,6 +67,11 @@ pub struct OoLaneDesc {
     /// pairs from pair `group_first` of the groups array, in rule order (the last of a group counts)
     pub n_groups: i32,
     pub group_first: i32,
+    /// a spline lane's lateral offset from the spline's middle (m, the .sli path's `lateral`): lanes of one
+    /// spline side by side become each other's left / right neighbours (lane changes, a way round a queue)
+    pub offset: f32,
+    /// the object path's `[crossingproblem]`: its meeting places with the other paths are the whole lanes
+    pub crossing_problem: i32,
 }
 
 fn next_rng(r: &mut u64) -> u64 {
@@ -144,7 +155,8 @@ pub extern "C" fn oo_traffic_create(map_dir: *const c_char, target: i32, spawn_r
         let Some(dir) = (unsafe { cstr(map_dir) }) else { return std::ptr::null_mut() };
         let dir = PathBuf::from(dir);
         let random = random_types(&g.root, &dir);
-        let net = omsi_sim::traffic::Network { left_hand: left_hand != 0, ..Default::default() };
+        // (right before left between unsigned crossing paths: see Network::right_before_left)
+        let net = omsi_sim::traffic::Network { left_hand: left_hand != 0, right_before_left: true, ..Default::default() };
         let mut sim = TrafficSim::assemble(
             &g.root,
             net,
@@ -161,12 +173,16 @@ pub extern "C" fn oo_traffic_create(map_dir: *const c_char, target: i32, spawn_r
         Box::into_raw(Box::new(OoTraffic {
             sim,
             root: g.root.clone(),
+            map_dir: dir.clone(),
+            service_files: None,
+            service_types: std::collections::HashMap::new(),
             ground: None,
             rng: 0x9E37_79B9_7F4A_7C15,
             initial: true,
             pop_t: 0.0,
             light_of_object: Default::default(),
             player: None,
+            view: None,
         }))
     })
 }
@@ -274,6 +290,8 @@ pub extern "C" fn oo_traffic_add_lanes(t: *mut OoTraffic, lanes: *const OoLaneDe
                 l.priority = d.priority;
             }
             l.source = d.source.max(0) as u32;
+            l.offset = d.offset;
+            l.crossing_problem = d.crossing_problem != 0;
             l.key = Some(LaneKey { tile: (d.tile_x, d.tile_y), id: d.id, path: d.path.max(0) as u16 });
             l.reversed = d.reversed != 0;
             if d.light_object >= 0 && d.light_index >= 0 {
@@ -306,7 +324,14 @@ fn populate(t: &mut OoTraffic, center: DVec3, forward: DVec3) {
         let out_of_view = d > 60.0 && to.normalize_or_zero().dot(f2) < 0.2;
         // (a car whose way ends - the end of the lanes handed over so far - waits where it is for the next
         //  lanes; it goes only once nobody sees it, never in plain view)
-        if d > far || ((at_end || c.gone) && out_of_view) || (c.stopped > 240.0 && out_of_view) {
+        // (a timetable bus stays while it serves its trip: it goes once the trip is done and nobody sees it)
+        let service = c.bus.is_some();
+        let remove = if service {
+            (c.bus.as_ref().is_some_and(|b| b.trip_done()) && out_of_view) || d > far * 3.0
+        } else {
+            d > far || ((at_end || c.gone) && out_of_view) || (c.stopped > 240.0 && out_of_view)
+        };
+        if remove {
             let _ = t.sim.take_off(i, Removal::Finished);
         } else {
             i += 1;
@@ -381,6 +406,12 @@ pub extern "C" fn oo_traffic_tick(t: *mut OoTraffic, dt: f32, cx: f64, cy: f64, 
         let center = DVec3::new(cx, cy, cz);
         let fwd = DVec3::new(fx, fy, 0.0).normalize_or(DVec3::Y);
         t.sim.camera = Some(center);
+        // openOMSI's viewer: a car out of the picture (and beyond the mirrors' and shadows' reach) runs its
+        // script a few times a second instead of every step and leaves its animations (set_visibility)
+        if let Some((d, fov, aspect)) = t.view {
+            let f = DVec3::new(d[0], d[1], d[2]);
+            t.sim.viewer = Some(omsi_sim::ai_traffic::viewer::Viewer::from_camera(center, if f.length() > 1e-6 { f } else { fwd }, fov * 1.25, 3000.0, aspect, 3000.0));
+        }
         t.sim.day_time = (day_hour.clamp(0.0, 24.0) as f64) * 3600.0;
         t.pop_t += dt;
         if t.initial || t.pop_t >= 0.25 {
@@ -652,5 +683,453 @@ pub extern "C" fn oo_traffic_light_set(t: *mut OoTraffic, object_id: i64, light:
             c.lights[i] = vec![(state, 3600.0)];
         }
         1
+    })
+}
+
+
+/// A timetable bus on its trip (openOMSI BusService): `entries` the trip's track as (path owner id, path index)
+/// pairs, `stops` its stations as (x, y, object id, departure in seconds of the day) quadruples. The route is
+/// the track's lanes as far as the network has them; a stop on it is served (doors, boarding, waiting for its
+/// time). `bus_path` empty: one of the map's AI buses (`[ai_veh_type] 2`). Returns the car id, 0 when the
+/// track has no lane here or no bus type was found.
+#[unsafe(no_mangle)]
+pub extern "C" fn oo_traffic_service_bus(
+    t: *mut OoTraffic,
+    bus_path: *const c_char,
+    entries: *const i64,
+    n_entries: usize,
+    stops: *const f64,
+    n_stops: usize,
+    line: *const c_char,
+    terminus: *const c_char,
+) -> u64 {
+    if entries.is_null() || n_entries == 0 {
+        return 0;
+    }
+    let bus_path = unsafe { cstr(bus_path) }.unwrap_or("").to_string();
+    let line = unsafe { cstr(line) }.unwrap_or("").to_string();
+    let terminus = unsafe { cstr(terminus) }.unwrap_or("").to_string();
+    let e = unsafe { std::slice::from_raw_parts(entries, n_entries * 2) };
+    let st = if stops.is_null() { &[][..] } else { unsafe { std::slice::from_raw_parts(stops, n_stops * 4) } };
+    with_t(t, 0, |t| {
+        let ty = service_type(t, &bus_path);
+        let Some(ty) = ty else { return 0 };
+        // the route: each entry's lane, the direction that goes on from the one before
+        let net = &t.sim.net;
+        let lanes_of = |id: i64, path: i64| -> Vec<usize> {
+            net.lanes.iter().enumerate().filter(|(_, l)| l.key.is_some_and(|k| k.id == id && k.path as i64 == path)).map(|(i, _)| i).collect()
+        };
+        let mut route: Vec<usize> = Vec::new();
+        for k in 0..n_entries {
+            let cands = lanes_of(e[k * 2], e[k * 2 + 1]);
+            if cands.is_empty() {
+                if route.is_empty() {
+                    continue; // (not handed over yet here: start where the network begins)
+                }
+                break;
+            }
+            let pick = if let Some(&prev) = route.last() {
+                let end = net.lanes[prev].at(net.lanes[prev].length()).0;
+                *cands.iter().min_by(|a, b| {
+                    let da = net.lanes[**a].at(0.0).0.distance(end);
+                    let db = net.lanes[**b].at(0.0).0.distance(end);
+                    da.total_cmp(&db)
+                }).unwrap()
+            } else if k + 1 < n_entries {
+                let next = lanes_of(e[(k + 1) * 2], e[(k + 1) * 2 + 1]);
+                *cands.iter().min_by(|a, b| {
+                    let end_a = net.lanes[**a].at(net.lanes[**a].length()).0;
+                    let end_b = net.lanes[**b].at(net.lanes[**b].length()).0;
+                    let da = next.iter().map(|n| net.lanes[*n].at(0.0).0.distance(end_a)).fold(f64::MAX, f64::min);
+                    let db = next.iter().map(|n| net.lanes[*n].at(0.0).0.distance(end_b)).fold(f64::MAX, f64::min);
+                    da.total_cmp(&db)
+                }).unwrap()
+            } else {
+                cands[0]
+            };
+            if let Some(&prev) = route.last() {
+                let end = net.lanes[prev].at(net.lanes[prev].length()).0;
+                if net.lanes[pick].at(0.0).0.distance(end) > 6.0 {
+                    break; // (a gap in what the network has: the route ends there for now)
+                }
+            }
+            route.push(pick);
+        }
+        if route.is_empty() {
+            return 0;
+        }
+        place_service(t, ty, route, st, line, terminus)
+    })
+}
+
+fn place_service(t: &mut OoTraffic, ty: Arc<VehicleType>, route: Vec<usize>, st: &[f64], line: String, terminus: String) -> u64 {
+    let net = &t.sim.net;
+        // the stops on it
+    let mut stop_list: Vec<(usize, f32, f32, f64, i64, f32)> = Vec::new();
+    for q in st.chunks(4) {
+        let p = DVec3::new(q[0], q[1], 0.0);
+        let mut best: Option<(usize, f32, f64)> = None;
+        for (ri, &li) in route.iter().enumerate() {
+            let lp = { let l = &net.lanes[li]; let mut pp = p; pp.z = l.at(0.0).0.z; l.nearest_point(pp) };
+            if let Some((s, d)) = lp {
+                if d < 25.0 && best.is_none_or(|b| d < b.2) {
+                    best = Some((ri, s, d));
+                }
+            }
+        }
+        if let Some((ri, s, _)) = best {
+            stop_list.push((ri, s, 0.0, q[3], q[2] as i64, 0.0));
+        }
+    }
+    stop_list.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)));
+    let (pos, heading) = net.lanes[route[0]].at(1.0);
+    if !t.sim.spawn_clear(&ty, pos, heading as f64) {
+        return 0;
+    }
+    let seed = next_rng(&mut t.rng);
+    let scheme = if ty.paint_schemes.is_empty() { None } else { t.sim.ai_scheme(&ty, seed >> 8) };
+    let mut host = omsi_sim::VehicleHost::new(omsi_sim::SimClock::default());
+    host.paint_scheme = Some(scheme);
+    let mut vehicle = VehicleInstance::new(ty.clone(), host);
+    vehicle.ground = t.ground.clone();
+    vehicle.apply_paint_vars(scheme);
+    crate::attach_coupled_parts(&t.root, &mut vehicle);
+    let timetable = omsi_sim::ai_traffic::bus_service::AiTimetable {
+        line,
+        terminus,
+        stops: stop_list.iter().map(|s| (s.4, String::new(), 0.0, 0.0)).collect(),
+    };
+    let setup = omsi_sim::ai_traffic::model::BusSetup {
+        route: route.clone(),
+        stops: stop_list.into_iter().map(omsi_sim::ai_traffic::bus_service::Stop::from_tuple).collect(),
+        number: None,
+        hof: None,
+        timetable,
+    };
+    let r0 = route[0];
+    // (no station of its trip on the way the network has yet: it drives on as traffic rather than ending its
+    //  trip on the spot and standing there braked)
+    let setup = if setup.stops.is_empty() { None } else { Some(setup) };
+    t.sim.place_car(vehicle, LaneKind::Street, r0, 1.0, ty, seed, scheme, None, Some(0.0), setup)
+}
+
+fn service_type(t: &mut OoTraffic, bus_path: &str) -> Option<Arc<VehicleType>> {
+    if !bus_path.is_empty() {
+        let p = omsi_cfg::resolve_path(&t.root, bus_path);
+        return VehicleType::load_ai(&t.root, &p).ok().map(Arc::new);
+    }
+    if t.service_files.is_none() {
+        let mut files = Vec::new();
+        if let Ok(lists) = omsi_map::ailists::AiLists::load(&t.map_dir.join("ailists.cfg")) {
+            for g in &lists.groups {
+                if !(g.is_depot || g.hof.is_some()) {
+                    continue;
+                }
+                // (a depot's buses are its [aigroup_depot_typgroup_2] types)
+                for f in g.vehicles.iter().map(|v| &v.file).chain(g.typgroups.iter().map(|tg| &tg.file)) {
+                    let lower = f.to_ascii_lowercase();
+                    if lower.ends_with(".bus") && !files.contains(f) {
+                        files.push(f.clone());
+                    }
+                }
+            }
+        }
+        say(0, &format!("traffic: {} timetable bus types in the map's ailists", files.len()));
+        t.service_files = Some(files);
+    }
+    let files = t.service_files.clone().unwrap_or_default();
+    for _ in 0..files.len().min(6) {
+        let f = &files[(next_rng(&mut t.rng) % files.len() as u64) as usize];
+        if let Some(ty) = t.service_types.get(f) {
+            return Some(ty.clone());
+        }
+        let p = omsi_cfg::resolve_path(&t.root, f);
+        if let Ok(ty) = VehicleType::load_ai(&t.root, &p) {
+            let ty = Arc::new(ty);
+            t.service_types.insert(f.clone(), ty.clone());
+            return Some(ty);
+        }
+    }
+    // (no timetable groups: one of the random traffic's buses)
+    let buses: Vec<_> = t.sim.types.iter().filter(|x| x.0.def.ai_veh_type == 2).map(|x| x.0.clone()).collect();
+    if buses.is_empty() {
+        return None;
+    }
+    let i = (next_rng(&mut t.rng) % buses.len() as u64) as usize;
+    Some(buses[i].clone())
+}
+
+/// A timetable bus on a trip without a track (OMSI type 2: stations only): it starts on the lane nearest
+/// (sx, sy) and drives the shortest way over the network from station to station (`stops` as in
+/// `oo_traffic_service_bus`). Returns the car id, 0 when nothing could be routed or placed.
+#[unsafe(no_mangle)]
+pub extern "C" fn oo_traffic_service_bus_stations(
+    t: *mut OoTraffic,
+    bus_path: *const c_char,
+    sx: f64,
+    sy: f64,
+    stops: *const f64,
+    n_stops: usize,
+    line: *const c_char,
+    terminus: *const c_char,
+) -> u64 {
+    if stops.is_null() || n_stops == 0 {
+        return 0;
+    }
+    let bus_path = unsafe { cstr(bus_path) }.unwrap_or("").to_string();
+    let line = unsafe { cstr(line) }.unwrap_or("").to_string();
+    let terminus = unsafe { cstr(terminus) }.unwrap_or("").to_string();
+    let st = unsafe { std::slice::from_raw_parts(stops, n_stops * 4) };
+    with_t(t, 0, |t| {
+        let Some(ty) = service_type(t, &bus_path) else { return 0 };
+        let net = &t.sim.net;
+        // the street lanes passing within 20 m of (x, y), nearest first (both directions: the stop's side decides)
+        let near_all = |x: f64, y: f64| -> Vec<usize> {
+            let p = DVec3::new(x, y, 0.0);
+            let mut v: Vec<(f64, usize)> = net
+                .lanes
+                .iter()
+                .enumerate()
+                .filter(|(_, l)| l.kind == LaneKind::Street)
+                .filter_map(|(i, l)| {
+                    let mut pp = p;
+                    pp.z = l.at(0.0).0.z;
+                    l.nearest_point(pp).filter(|(_, d)| *d < 20.0).map(|(_, d)| (d, i))
+                })
+                .collect();
+            v.sort_by(|a, b| a.0.total_cmp(&b.0));
+            v.into_iter().take(6).map(|x| x.1).collect()
+        };
+        let starts = near_all(sx, sy);
+        if starts.is_empty() {
+            return 0;
+        }
+        // from the start lane that reaches the first station by the shortest way, on station by station
+        let mut route: Vec<usize> = Vec::new();
+        let mut cur: Option<usize> = None;
+        for q in st.chunks(4) {
+            let targets = near_all(q[0], q[1]);
+            if targets.is_empty() {
+                break;
+            }
+            let froms: Vec<usize> = match cur { Some(c) => vec![c], None => starts.clone() };
+            let mut best: Option<Vec<usize>> = None;
+            for &f in &froms {
+                for &tg in &targets {
+                    let path = if f == tg { Some(vec![f]) } else { net.shortest_path(f, tg) };
+                    if let Some(path) = path {
+                        if best.as_ref().is_none_or(|b| path.len() < b.len()) {
+                            best = Some(path);
+                        }
+                    }
+                }
+            }
+            let Some(path) = best else { break }; // (the way on is not handed over yet: the route ends here)
+            for l in path {
+                if route.last() != Some(&l) {
+                    route.push(l);
+                }
+            }
+            cur = route.last().copied();
+        }
+        // openOMSI's own router (timetable_run transit::route, as its timetable routes a trip): from where the
+        // bus is through as many of its stations as the network has a way to now
+        {
+            let mut places = vec![DVec3::new(sx, sy, net.lanes[starts[0]].at(0.0).0.z)];
+            for q in st.chunks(4) {
+                places.push(DVec3::new(q[0], q[1], places[0].z));
+            }
+            let mut n = places.len();
+            while n >= 2 {
+                let names: Vec<String> = (0..n).map(|i| format!("s{i}")).collect();
+                if let Ok(r) = omsi_sim::timetable_run::transit::route(net, omsi_cfg::transport::TransportMode::Bus, &names, &places[..n]) {
+                    if r.lanes.len() > route.len() {
+                        route = r.lanes;
+                    }
+                    break;
+                }
+                n -= 1;
+            }
+        }
+        if route.is_empty() {
+            route.push(starts[0]);
+        }
+        place_service(t, ty, route, st, line, terminus)
+    })
+}
+
+/// One line about car `id` for the log: its timetable phase, speed, lane, route progress, standing time.
+#[unsafe(no_mangle)]
+pub extern "C" fn oo_traffic_car_debug(t: *mut OoTraffic, id: u64, buf: *mut c_char, cap: usize) -> usize {
+    with_t(t, 0, |t| {
+        let Some(c) = t.sim.cars.iter().find(|c| c.id == id) else { return crate::write_cstr("gone", buf, cap) };
+        let phase = c.bus.as_ref().map(|b| format!("{:?} {:.0}s", b.phase, b.phase_t)).unwrap_or_else(|| "-".into());
+        let s = format!(
+            "phase={} v={:.1}km/h lane={} route={}/{} stopped={:.1}s gone={} engine={:.0} throttle={:.2} brake={:.2}",
+            phase,
+            c.vehicle.physics.speed * 3.6,
+            c.state.lane,
+            c.state.route_index,
+            c.state.route.len(),
+            c.stopped,
+            c.gone,
+            c.vehicle.var("engine_on").unwrap_or(-1.0),
+            c.vehicle.var("throttle").unwrap_or(-1.0),
+            c.vehicle.var("brake").unwrap_or(-1.0)
+        );
+        crate::write_cstr(&s, buf, cap)
+    })
+}
+
+/// What car `id` is doing now, for the editor's car window (cheap: read off its state, no search beyond the id).
+#[repr(C)]
+pub struct OoCarState {
+    /// 0 driving, 1 accelerating, 2 braking, 3 waiting in a queue / for the car ahead, 4 red light, 5 giving way
+    /// at a junction, 6 at a stop (timetable bus), 7 pulling out / parking, 8 end of its way, 9 waiting for room
+    /// on its exit
+    pub action: i32,
+    pub speed_kmh: f32,
+    /// seconds it has stood
+    pub stopped_s: f32,
+    /// distance to what holds it (m), -1 none
+    pub why_dist: f32,
+    /// the vehicle it waits for (id), 0 none
+    pub waits_on: u64,
+    /// the constraint nearest ahead ("lead", "light", "yield", "merge", ...), NUL terminated
+    pub why: [u8; 16],
+    /// a timetable bus's phase (Running, Boarding, Waiting, Closing, TripDone) and stops left, NUL terminated
+    pub phase: [u8; 40],
+}
+
+fn put_str(dst: &mut [u8], s: &str) {
+    let n = s.len().min(dst.len().saturating_sub(1));
+    dst[..n].copy_from_slice(&s.as_bytes()[..n]);
+    dst[n] = 0;
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn oo_traffic_car_state(t: *mut OoTraffic, id: u64, out: *mut OoCarState) -> i32 {
+    if out.is_null() {
+        return 0;
+    }
+    with_t(t, 0, |t| {
+        let Some(c) = t.sim.cars.iter().find(|c| c.id == id) else { return 0 };
+        let o = unsafe { &mut *out };
+        let v = c.vehicle.physics.speed;
+        let throttle = c.vehicle.var("throttle").unwrap_or(0.0);
+        let brake = c.vehicle.var("brake").unwrap_or(0.0);
+        let at_stop = c.bus.as_ref().is_some_and(|b| {
+            use omsi_sim::ai_traffic::bus_service::Phase;
+            matches!(b.phase, Phase::Boarding | Phase::Waiting | Phase::Closing | Phase::TripDone)
+        });
+        let standing = v.abs() < 0.4;
+        o.action = if at_stop {
+            6
+        } else if c.light_hold {
+            4
+        } else if c.yielding {
+            5
+        } else if c.exit_wait {
+            9
+        } else if c.pull_out > 0.0 || c.park.is_some() {
+            7
+        } else if standing && c.state.route.is_empty() && c.gone {
+            8
+        } else if standing && (c.held || c.lead_car.is_some() || c.stopped > 0.5) {
+            3
+        } else if c.state.braking || brake > 0.15 {
+            2
+        } else if throttle > 0.15 {
+            1
+        } else {
+            0
+        };
+        o.speed_kmh = (v * 3.6) as f32;
+        o.stopped_s = c.stopped;
+        o.why_dist = if c.why.0.is_empty() { -1.0 } else { c.why.1 };
+        o.waits_on = c.waits_on.or(c.yield_to).or(c.lead_car).unwrap_or(0);
+        put_str(&mut o.why, c.why.0);
+        let ph = c.bus.as_ref().map(|b| format!("{:?} {:.0}s, {} paradas", b.phase, b.phase_t, b.stops.len())).unwrap_or_default();
+        put_str(&mut o.phase, &ph);
+        1
+    })
+}
+
+/// The body of car i in the world (model frame -> world, as `oo_body_matrix` for the player's bus).
+#[unsafe(no_mangle)]
+pub extern "C" fn oo_traffic_car_body(t: *mut OoTraffic, i: i32, out16: *mut f32) -> i32 {
+    if out16.is_null() {
+        return 0;
+    }
+    with_t(t, 0, |t| {
+        let Some(c) = t.sim.cars.get(i.max(0) as usize) else { return 0 };
+        let m = glam::Mat4::from_translation(c.vehicle.position.as_vec3()) * c.vehicle.body_rotation();
+        unsafe { std::ptr::copy_nonoverlapping(m.to_cols_array().as_ptr(), out16, 16) };
+        1
+    })
+}
+
+/// The editor camera's view for the traffic (direction to its target, vertical field of view in degrees,
+/// width / height): cars out of it update their scripts and animations less often (openOMSI viewer).
+#[unsafe(no_mangle)]
+pub extern "C" fn oo_traffic_set_view(t: *mut OoTraffic, dx: f64, dy: f64, dz: f64, fov_deg: f32, aspect: f32) {
+    with_t(t, (), |t| {
+        t.view = Some(([dx, dy, dz], fov_deg.clamp(10.0, 150.0), (aspect as f64).clamp(0.2, 5.0)));
+    })
+}
+
+/// Why car `id` drives where it drives, for the editor's log when it is clicked: the lane it is on and the
+/// lanes it has planned (as map paths: object/spline id, path, direction), its route if it has one, what holds
+/// it and whom it waits for at its junction. One line; the editor logs it when it changes.
+#[unsafe(no_mangle)]
+pub extern "C" fn oo_traffic_car_explain(t: *mut OoTraffic, id: u64, buf: *mut c_char, cap: usize) -> usize {
+    with_t(t, 0, |t| {
+        let Some(c) = t.sim.cars.iter().find(|c| c.id == id) else { return crate::write_cstr("gone", buf, cap) };
+        let net = &t.sim.net;
+        let lane_txt = |l: usize| -> String {
+            match net.lanes.get(l) {
+                Some(ln) => {
+                    let k = ln.key.map(|k| format!("{}{}/{}", if ln.source == 2 { "obj" } else { "spl" }, k.id, k.path)).unwrap_or_else(|| "?".into());
+                    let turn = match ln.turn { 1 => "L", 2 => "R", _ => "" };
+                    format!("{l}:{k}{}{turn}{}", if ln.reversed { "r" } else { "" }, if ln.next.is_empty() { "|END" } else { "" })
+                }
+                None => format!("{l}:-"),
+            }
+        };
+        let st = &c.state;
+        let mut s = format!("on {} at {:.0}/{:.0} m", lane_txt(st.lane), st.s, net.lanes.get(st.lane).map(|l| l.length()).unwrap_or(0.0));
+        let nexts: Vec<String> = net.lanes.get(st.lane).map(|l| l.next.iter().map(|&n| lane_txt(n)).collect()).unwrap_or_default();
+        s.push_str(&format!(" | exits [{}]", nexts.join(" ")));
+        let mut plan: Vec<String> = Vec::new();
+        if let Some(p) = st.planned_next {
+            plan.push(lane_txt(p));
+        }
+        plan.extend(st.ahead.iter().take(6).map(|&l| lane_txt(l)));
+        s.push_str(&format!(" | plan [{}]", plan.join(" > ")));
+        if !st.route.is_empty() {
+            let from = st.route_index.min(st.route.len());
+            let r: Vec<String> = st.route[from..].iter().take(6).map(|&l| lane_txt(l)).collect();
+            s.push_str(&format!(" | route {}/{} [{}]", st.route_index, st.route.len(), r.join(" > ")));
+        }
+        if st.turn_wish != 0 {
+            s.push_str(&format!(" | turn_wish {}", st.turn_wish));
+        }
+        s.push_str(&format!(" | v {:.0} km/h why {} {:.0} m", c.vehicle.physics.speed * 3.6, c.why.0, c.why.1));
+        if c.yielding { s.push_str(" yielding"); }
+        if c.light_hold { s.push_str(" red"); }
+        if c.exit_wait { s.push_str(" exit_full"); }
+        if let Some(w) = c.waits_on { s.push_str(&format!(" waits_on {w}")); }
+        if let Some(w) = c.yield_to { s.push_str(&format!(" yield_to {w}")); }
+        if !c.holds.is_empty() {
+            let h: Vec<String> = c.holds.iter().take(6).map(|(o, k)| format!("{o}:{k:?}")).collect();
+            s.push_str(&format!(" holds [{}]", h.join(" ")));
+        }
+        if !c.reserved.is_empty() {
+            s.push_str(&format!(" claims {}", c.reserved.len()));
+        }
+        if let Some(h) = &c.holding { s.push_str(&format!(" holding: {h}")); }
+        if !c.junction_why.is_empty() { s.push_str(&format!(" junction: {}", c.junction_why)); }
+        if c.stopped > 0.5 { s.push_str(&format!(" stood {:.0}s", c.stopped)); }
+        crate::write_cstr(&s, buf, cap)
     })
 }

@@ -1,0 +1,39 @@
+diff --git a/crates/omsi-sim/src/traffic/mod.rs b/crates/omsi-sim/src/traffic/mod.rs
+index 5a3e9a4..5ecf77e 100644
+--- a/crates/omsi-sim/src/traffic/mod.rs
++++ b/crates/omsi-sim/src/traffic/mod.rs
+@@ -61,6 +61,12 @@ pub struct Network {
+     /// The map drives on the left (`global.cfg` `[lht]`): priority to the left, the
+     /// oncoming lane on the right, turning right across the oncoming traffic.
+     pub left_hand: bool,
++    /// Between paths of equal rank that cross (no `[rule] priority`, no ring, no turn across the
++    /// oncoming traffic) the one coming from the right goes first (StVO §8; from the left on a
++    /// left-hand map). Off by default: Omsi.exe has no such rule (first come, first served,
++    /// #2058); the map editor's traffic turns it on, where cars standing at every approach of
++    /// an unsigned crossing could not settle who goes.
++    pub right_before_left: bool,
+ }
+ 
+ /// `Network::reach` is counted up to this far (m).
+diff --git a/crates/omsi-sim/src/traffic/network.rs b/crates/omsi-sim/src/traffic/network.rs
+index 94a9164..d4b10d1 100644
+--- a/crates/omsi-sim/src/traffic/network.rs
++++ b/crates/omsi-sim/src/traffic/network.rs
+@@ -350,7 +350,16 @@ impl Network {
+             return la.turn == across && lb.turn != across;
+         }
+         // side by side from the same direction: the one turning across the other waits
+-        rel.abs() <= 30.0 && la.turn != 0 && lb.turn == 0
++        if rel.abs() <= 30.0 {
++            return la.turn != 0 && lb.turn == 0;
++        }
++        // (opt-in) crossing from the side: the one from the right goes first (b's heading is a's turned
++        // left by about 90 degrees when b comes from a's right; mirrored on a left-hand map)
++        if self.right_before_left && (45.0..=135.0).contains(&rel.abs()) {
++            let from_right = if self.left_hand { rel > 0.0 } else { rel < 0.0 };
++            return from_right;
++        }
++        false
+     }
+ 
+     /// The lane beside `lane` at `s` that carries the traffic the other way (the other half

@@ -14,5 +14,7 @@ void open_map_text_editor(HWND owner, const std::filesystem::path& path, int got
                           const std::filesystem::path* allowed_write_root = nullptr);
 void pump_map_text_editor();
 [[nodiscard]] bool map_text_editor_is_open();
+// The open .map viewer's rect in its owner's client coordinates (the editor's ImGui space). False: not open.
+[[nodiscard]] bool map_text_editor_client_rect(float& l, float& t, float& r, float& b);
 
 } // namespace omsi::ui

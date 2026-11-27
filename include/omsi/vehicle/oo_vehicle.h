@@ -83,6 +83,8 @@ typedef struct OoLaneDesc {
     /* [rule] trafficdensity per AI group: n_groups (group, value) float pairs from pair group_first of `groups` */
     int32_t n_groups;
     int32_t group_first;
+    float offset;             /* spline lane: lateral offset from the spline's middle (.sli path lateral) */
+    int32_t crossing_problem; /* object path [crossingproblem] */
 } OoLaneDesc;
 OoTraffic* oo_traffic_create(const char* map_dir, int32_t target, float spawn_radius, int32_t left_hand);
 void oo_traffic_destroy(OoTraffic* t);
@@ -119,6 +121,31 @@ size_t oo_bus_interior_lights(OoBus* bus, float* out, size_t cap);
 size_t oo_traffic_bodies(OoTraffic* t, float* out, size_t cap);
 /* the phase the editor shows for light `light` of crossing `object_id`: the traffic obeys it */
 int32_t oo_traffic_light_set(OoTraffic* t, int64_t object_id, int32_t light, int32_t state);
+/* a timetable bus on its trip: entries = (owner id, path index) pairs of the trip's track, stops = (x, y, object id,
+   departure s of day) quadruples; bus_path "" = one of the map's AI buses. Returns the car id, 0 when none placed. */
+uint64_t oo_traffic_service_bus(OoTraffic* t, const char* bus_path, const int64_t* entries, size_t n_entries,
+                                const double* stops, size_t n_stops, const char* line, const char* terminus);
+/* the same for a trip without a track (stations only): starts at the lane nearest (sx, sy), shortest way between stations */
+size_t oo_traffic_car_debug(OoTraffic* t, uint64_t id, char* buf, size_t cap);
+uint64_t oo_traffic_service_bus_stations(OoTraffic* t, const char* bus_path, double sx, double sy, const double* stops,
+                                         size_t n_stops, const char* line, const char* terminus);
+/* what car `id` does now (one call per car every half second for the editor's car window) */
+typedef struct OoCarState {
+    int32_t action; /* 0 driving 1 accelerating 2 braking 3 queue 4 red light 5 giving way 6 at a stop 7 pulling out /
+                       parking 8 end of its way 9 waiting for room on its exit */
+    float speed_kmh;
+    float stopped_s;
+    float why_dist; /* m to what holds it, -1 none */
+    uint64_t waits_on;
+    char why[16];
+    char phase[40]; /* timetable bus: BusService phase */
+} OoCarState;
+int32_t oo_traffic_car_state(OoTraffic* t, uint64_t id, OoCarState* out);
+int32_t oo_traffic_car_body(OoTraffic* t, int32_t i, float* out16); /* body -> world, as oo_body_matrix */
+/* the camera's view: cars out of it run their scripts / animations less often (call before each tick) */
+void oo_traffic_set_view(OoTraffic* t, double dx, double dy, double dz, float fov_deg, float aspect);
+/* one line on why car `id` drives where it does: lane, exits, plan, route, holds (the editor logs it on a click) */
+size_t oo_traffic_car_explain(OoTraffic* t, uint64_t id, char* buf, size_t cap);
 size_t oo_mesh_file(OoBus* bus, int32_t i, char* buf, size_t cap); /* UTF-8 .o3d path */
 /* [CTC] paint of the player's train mesh i (its first repaint, as OMSI's dialog picks): "<default>	<file>
 " lines */

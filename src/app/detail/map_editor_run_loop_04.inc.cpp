@@ -2542,12 +2542,16 @@
                     highlight_spline_attach_group(*ei, kHoverAmt, kHoverR, kHoverG, kHoverB);
                     highlight_spline_next_chain(edit_spline_attachments[*ei].parent_spline_id, 0.5f, 0.2f, 0.95f,
                                                 1.f);
+                    if (parked_hot_hook)
+                        for (const auto goid : spline_attach_group_object_ids(*ei))
+                            parked_hot_hook(goid, kHoverAmt, kHoverR, kHoverG, kHoverB);
                 } else {
                     const auto oid = edit_objects[static_cast<std::size_t>(hover_object)].id;
                     for (const auto& sp : scene_places) {
                         if (sp.alive && sp.object_id == oid)
                             renderer.set_chunk_highlight(sp.chunk, kHoverAmt, kHoverR, kHoverG, kHoverB);
                     }
+                    if (parked_hot_hook) parked_hot_hook(oid, kHoverAmt, kHoverR, kHoverG, kHoverB);
                 }
             }
             if (ev.tool == ui::EditorTool::TracksTrips || ev.tool == ui::EditorTool::StationLinks) {
@@ -2591,12 +2595,16 @@
                     highlight_spline_attach_group(*ei, kSelAmt, kSelR, kSelG, kSelB);
                     highlight_spline_next_chain(edit_spline_attachments[*ei].parent_spline_id, 0.55f, 0.15f, 0.9f,
                                                 1.f);
+                    if (parked_hot_hook)
+                        for (const auto goid : spline_attach_group_object_ids(*ei))
+                            parked_hot_hook(goid, kSelAmt, kSelR, kSelG, kSelB);
                 } else {
                     const auto oid = edit_objects[static_cast<std::size_t>(selected_object)].id;
                     for (const auto& sp : scene_places) {
                         if (sp.alive && sp.object_id == oid)
                             renderer.set_chunk_highlight(sp.chunk, kSelAmt, kSelR, kSelG, kSelB);
                     }
+                    if (parked_hot_hook) parked_hot_hook(oid, kSelAmt, kSelR, kSelG, kSelB);
                 }
             }
             if (spline_tab_highlight && selected_spline >= 0 &&
@@ -2617,6 +2625,7 @@
                         if (sp.alive && sp.object_id == oid)
                             renderer.set_chunk_highlight(sp.chunk, kSelAmt, kSelR, kSelG, kSelB);
                     }
+                    if (parked_hot_hook) parked_hot_hook(oid, kSelAmt, kSelR, kSelG, kSelB);
                 }
             }
             if (spline_tab_highlight) {
@@ -2870,6 +2879,7 @@
             }
             const auto gpu = renderer.last_gpu_timing();
             std::string title = std::string(omsi::kEditorProductName) + " " + omsi::kEditorVersion;
+            title += std::string(" [") + gfx::backend::label(gfx::backend::active()) + "]";
             {
                 char fps_bit[96]{};
                 std::snprintf(fps_bit, sizeof(fps_bit), " | %d FPS 1%%=%.0f GPU=%.1fms %s", fps_display,
@@ -3329,6 +3339,7 @@
                     editor_sfx.set_volume(panel.imgui_state().place_feedback_volume / 100.f);
                 }
                 {
+                    ai_bus_list_window();
                     // World sound window (self-contained block, see omsi/sound/world_sound_window.hpp).
                     const int ws_flags = omsi::sound::draw_world_sound_window(
                         world_sound_ui, world_sound_scene.candidate_count(), world_sound_scene.live_objects(),
@@ -3418,13 +3429,13 @@
                         float cex = 0.f, cey = 0.f, cez = 0.f;
                         camera.eye_position(cex, cey, cez);
                         const float dist = std::sqrt((m16[12] - cex) * (m16[12] - cex) + (m16[13] - cey) * (m16[13] - cey));
-                        const ImGuiViewport* vp = ImGui::GetMainViewport();
-                        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 360.f, vp->WorkPos.y + 120.f),
-                                                ImGuiCond_Appearing);
+                        ui::float_slot_begin("ai_car", 40); // docked with the other small windows
                         ImGui::SetNextWindowBgAlpha(0.92f);
                         bool open = true;
-                        if (ImGui::Begin("Auto IA###ai_car_win", &open,
-                                         ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+                        const bool ai_win_drawn = ImGui::Begin("Auto IA###ai_car_win", &open,
+                                                               ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
+                        ui::float_slot_end();
+                        if (ai_win_drawn) {
                             const std::string pf = omsi::path_text(std::filesystem::u8path(part).filename());
                             ImGui::Text("Tipo: %s", pf.c_str());
                             ImGui::Text("Id: %llu   Mallas: %zu", static_cast<unsigned long long>(ai_selected_id),
@@ -3432,17 +3443,110 @@
                             ImGui::Text("Velocidad: %.0f km/h", kmh);
                             ImGui::Text("Posicion: %.1f, %.1f, %.1f  (a %.0f m)", m16[12], m16[13], m16[14], dist);
                             ImGui::TextDisabled("%s", part);
+                            // what it does now (openOMSI AiState / BusService), asked every half second
+                            {
+                                static OoCarState s_st{};
+                                static std::uint64_t s_st_id = 0;
+                                static double s_st_t = -1.0;
+                                static bool s_st_ok = false;
+                                const double tnow = glfwGetTime();
+                                if (s_st_id != ai_selected_id || tnow - s_st_t > 0.5) {
+                                    // its decisions in the log: lane, exits, plan, route, holds - once on the click
+                                    // and again whenever they change (one car, twice a second)
+                                    static std::string s_expl_last;
+                                    char expl[2048];
+                                    if (oo_traffic_car_explain(ai_traffic, ai_selected_id, expl, sizeof(expl))) {
+                                        std::string e(expl);
+                                        // (the speed / standing time change all the time: compared without them)
+                                        const auto cut = e.find(" | v ");
+                                        const std::string key = std::to_string(ai_selected_id) + (cut == std::string::npos ? e : e.substr(0, cut));
+                                        if (key != s_expl_last) {
+                                            s_expl_last = key;
+                                            log::info("ai car " + std::to_string(ai_selected_id) + ": " + e);
+                                        }
+                                    }
+                                    s_st_id = ai_selected_id;
+                                    s_st_t = tnow;
+                                    s_st_ok = oo_traffic_car_state(ai_traffic, ai_selected_id, &s_st) != 0;
+                                }
+                                if (s_st_ok) {
+                                    static const char* kAct[] = {"circulando", "acelerando", "frenando", "en cola",
+                                                                 "semaforo en rojo", "cediendo el paso", "en la parada",
+                                                                 "saliendo / estacionando", "fin del camino",
+                                                                 "esperando sitio a la salida"};
+                                    const int a = s_st.action >= 0 && s_st.action < 10 ? s_st.action : 0;
+                                    const ImVec4 col = a == 2 || a == 4 ? ImVec4(1.f, 0.45f, 0.35f, 1.f)
+                                                       : a == 1           ? ImVec4(0.45f, 1.f, 0.5f, 1.f)
+                                                       : a >= 3           ? ImVec4(1.f, 0.85f, 0.3f, 1.f)
+                                                                          : ImVec4(0.85f, 0.85f, 0.85f, 1.f);
+                                    ImGui::TextColored(col, "Accion: %s", kAct[a]);
+                                    if (s_st.stopped_s > 0.5f) {
+                                        ImGui::SameLine();
+                                        ImGui::TextDisabled("(parado %.0f s)", s_st.stopped_s);
+                                    }
+                                    if (s_st.why[0])
+                                        ImGui::TextDisabled("Lo frena: %s a %.0f m%s", s_st.why, s_st.why_dist,
+                                                            s_st.waits_on ? "  (espera a otro vehiculo)" : "");
+                                    if (s_st.phase[0]) ImGui::Text("Servicio: %s", s_st.phase);
+                                }
+                            }
+                            // LOD -> model -> textures of each part of its type (only the first LOD is on the GPU)
+                            if (ImGui::TreeNode("Modelo (LOD / mallas / texturas)")) {
+                                std::unordered_set<std::string> parts_shown;
+                                for (int k = 0; k < static_cast<int>(car_it->second.chunks.size()); ++k) {
+                                    char pf2[1024]{};
+                                    if (!oo_traffic_car_part_file(ai_traffic, ai_i, k, pf2, sizeof(pf2))) continue;
+                                    const std::string key = ai_traffic_lower(pf2);
+                                    if (!parts_shown.insert(key).second) continue;
+                                    const auto pit = ai_traffic_protos.find(key);
+                                    if (pit == ai_traffic_protos.end()) continue;
+                                    const auto& pr = pit->second;
+                                    if (!ImGui::TreeNode(pr.name.c_str(), "%s (%zu mallas en GPU)", pr.name.c_str(), pr.all.size()))
+                                        continue;
+                                    if (pr.model && pr.model->has_value()) {
+                                        const auto& md = **pr.model;
+                                        ImGui::TextDisabled("%s", omsi::path_text(md.cfg_path.filename()).c_str());
+                                        const auto* prim = omsi::model_cfg::primary_lod(md);
+                                        for (std::size_t li = 0; li < md.lods.size(); ++li) {
+                                            const auto& lod = md.lods[li];
+                                            const bool loaded = &lod == prim;
+                                            ImGui::PushID(static_cast<int>(li));
+                                            if (ImGui::TreeNode("lod", "LOD %zu  (screensize %.2f)  %zu mallas  %s", li,
+                                                                lod.distance, lod.meshes.size(), loaded ? "[CARGADO]" : "")) {
+                                                for (std::size_t mi = 0; mi < lod.meshes.size(); ++mi) {
+                                                    const auto& me = lod.meshes[mi];
+                                                    if (me.mesh_file.empty()) continue;
+                                                    ImGui::PushID(static_cast<int>(mi));
+                                                    if (ImGui::TreeNode("m", "%s (%zu texturas)", me.mesh_file.c_str(), me.materials.size())) {
+                                                        for (const auto& mt : me.materials)
+                                                            ImGui::BulletText("%s%s", mt.diffuse_texture.c_str(),
+                                                                              mt.is_matl_change ? "  (matl_change)" : "");
+                                                        ImGui::TreePop();
+                                                    }
+                                                    ImGui::PopID();
+                                                }
+                                                ImGui::TreePop();
+                                            }
+                                            ImGui::PopID();
+                                        }
+                                    } else {
+                                        ImGui::TextDisabled(pr.state == -1 ? "no se pudo leer" : "leyendo...");
+                                    }
+                                    ImGui::TreePop();
+                                }
+                                ImGui::TreePop();
+                            }
                             if (ImGui::Button("Borrar auto")) {
                                 oo_traffic_remove_car(ai_traffic, ai_selected_id);
                                 panel.set_status("Auto IA borrado");
                                 open = false;
                             }
                             ImGui::SameLine();
-                            if (ImGui::Button("Mirar")) {
-                                camera.target_x = m16[12];
-                                camera.target_y = m16[13];
-                                camera.target_z = m16[14];
+                            if (ImGui::Button(ai_follow_id == ai_selected_id ? "Dejar de seguir" : "Seguir")) {
+                                if (ai_follow_id == ai_selected_id) ai_follow_stop();
+                                else ai_follow_start(ai_selected_id);
                             }
+                            if (ai_follow_id == ai_selected_id) ai_follow_cam_buttons();
                         }
                         ImGui::End();
                         if (!open) {
@@ -3538,22 +3642,40 @@
                             ? "LLEVANDO EL BUS  |  apunta donde va  rueda girar  click / click derecho soltar"
                         : walk_hold_id != 0
                             ? "LLEVANDO OBJETO  |  apunta donde va  click / click derecho soltar  Supr borrar  R rotar  Ctrl+Z deshacer"
-                            : "PEATON EDITOR  |  click seleccionar y llevar (tambien el bus)  click derecho soltar  Supr borrar  "
-                              "N crear  E cursor  F7 solo peaton / subir al bus";
+                            : "PEATON EDITOR  |  click seleccionar  G mover  X/Y/Z eje  F6 local/global  R rotar  Supr borrar  "
+                              "Ctrl+Z/Y deshacer/rehacer  E cursor  F7 solo peaton / subir al bus";
                     const ImVec2 ts = ImGui::CalcTextSize(hint);
                     const ImVec2 tp(c.x - ts.x * 0.5f, vp->Pos.y + vp->Size.y - 120.f);
                     fg->AddRectFilled(ImVec2(tp.x - 10.f, tp.y - 5.f), ImVec2(tp.x + ts.x + 10.f, tp.y + ts.y + 5.f),
                                       IM_COL32(0, 0, 0, 150), 6.f);
                     fg->AddText(tp, IM_COL32(255, 255, 255, 235), hint);
                 }
-                // The selected object's .sco: meshes, LOD bands, vertices / triangles, textures, size and flags
+                // The selected object's .sco: meshes, LOD bands, vertices / triangles, materials, size and flags
                 // (read once per .sco; the window comes back with every new selection after being closed).
+                // Each LOD is a list item (vertices / triangles / meshes) with its materials under it; hovering a
+                // material shows its texture (decoded on a worker the first time). Docked in the float layout.
                 {
+                    struct ScoMat {
+                        std::string name;           // texture as the mesh names it
+                        std::filesystem::path file; // resolved file ('' = not found)
+                    };
+                    struct ScoModel { // one [mesh] entry: its file, size and textures
+                        std::string file;
+                        bool is_x = false;
+                        std::uint64_t verts = 0, tris = 0;
+                        std::vector<ScoMat> mats;
+                    };
+                    struct ScoLod {
+                        int meshes = 0;
+                        float screensize = 0.f;
+                        std::uint64_t verts = 0, tris = 0;
+                        std::vector<ScoModel> models;
+                    };
                     struct ScoStats {
                         int meshes = 0, o3d = 0, x = 0;
                         std::uint64_t verts = 0, tris = 0;
-                        std::map<int, std::pair<int, float>> lods; // lod index -> (meshes, screensize)
-                        std::vector<std::string> textures;
+                        std::map<int, ScoLod> lods; // lod index -> band
+                        std::vector<ScoMat> textures; // every material texture of the object, once
                         std::string flags, name;
                         float bw = 0.f, bl = 0.f, bh = 0.f;
                     };
@@ -3572,27 +3694,69 @@
                             ScoStats st;
                             st.name = omsi::path_text(o.sco_path.filename());
                             if (const sco::SceneryObject* so = cached_sco(o.sco_path)) {
-                                std::set<std::string> tex;
-                                for (const auto& t : so->material_textures)
-                                    if (!t.empty()) tex.insert(t);
+                                std::set<std::string> all_tex;
+                                auto add_mat = [&](ScoModel& md, const std::string& tex, const std::filesystem::path& file) {
+                                    if (tex.empty()) return;
+                                    bool dup = false;
+                                    for (const auto& m : md.mats) dup |= m.name == tex;
+                                    if (!dup) md.mats.push_back({tex, file});
+                                    if (all_tex.insert(tex).second) st.textures.push_back({tex, file});
+                                };
                                 for (const auto& m : so->meshes) {
                                     ++st.meshes;
-                                    auto& lb = st.lods[m.lod_index];
-                                    ++lb.first;
-                                    lb.second = m.lod_screensize;
+                                    auto& lb0 = st.lods[m.lod_index];
+                                    ++lb0.meshes;
+                                    lb0.screensize = m.lod_screensize;
+                                    lb0.models.push_back({});
+                                    auto& lb = lb0.models.back(); // (named lb: the counters below are per model)
+                                    lb.file = omsi::path_text(m.mesh_file.filename());
+                                    lb.is_x = !m.is_o3d;
                                     if (!m.is_o3d) {
                                         ++st.x;
+                                        auto xf = xfile::load_x_file(m.mesh_file);
+                                        if (!xf || xf->parts.empty()) {
+                                            const auto alt = o.sco_path.parent_path() / "model" / m.mesh_file.filename();
+                                            xf = xfile::load_x_file(alt);
+                                        }
+                                        if (xf) {
+                                            for (const auto& part : xf->parts) {
+                                                lb.verts += part.vertices.size();
+                                                lb.tris += part.indices.size() / 3;
+                                                add_mat(lb, part.texture_filename,
+                                                        resolve_x_tex(m.mesh_file, o.sco_path, part.texture_filename));
+                                            }
+                                        }
                                         continue;
                                     }
                                     ++st.o3d;
                                     if (const auto mp = o3d::load_mapped_shared(m.mesh_file); mp && mp->valid()) {
-                                        st.verts += mp->mesh().vertex_count;
-                                        st.tris += mp->mesh().triangle_count;
-                                        for (const auto& mat : mp->mesh().parse_materials())
-                                            if (!mat.texture.empty()) tex.insert(mat.texture);
+                                        lb.verts += mp->mesh().vertex_count;
+                                        lb.tris += mp->mesh().triangle_count;
+                                        for (const auto& mat : mp->mesh().parse_materials()) {
+                                            std::filesystem::path file;
+                                            if (!mat.texture.empty())
+                                                if (const auto r = gfx::dx12::resolve_texture_path_day(m.mesh_file, mat.texture,
+                                                                                                       cfg.omsi_root))
+                                                    file = *r;
+                                            add_mat(lb, mat.texture, file);
+                                        }
                                     }
                                 }
-                                st.textures.assign(tex.begin(), tex.end());
+                                for (const auto& t : so->material_textures)
+                                    if (!t.empty() && all_tex.insert(t).second) {
+                                        std::filesystem::path file;
+                                        if (const auto r = gfx::dx12::resolve_texture_path_day(o.sco_path, t, cfg.omsi_root))
+                                            file = *r;
+                                        st.textures.push_back({t, file});
+                                    }
+                                for (auto& [li, lb] : st.lods) {
+                                    for (const auto& md : lb.models) {
+                                        lb.verts += md.verts;
+                                        lb.tris += md.tris;
+                                    }
+                                    st.verts += lb.verts;
+                                    st.tris += lb.tris;
+                                }
                                 if (so->has_boundingbox) {
                                     st.bw = so->bbox_w;
                                     st.bl = so->bbox_l;
@@ -3610,23 +3774,87 @@
                         }
                         if (s_info_open) {
                             const auto& st = it->second;
-                            const ImGuiViewport* vp = ImGui::GetMainViewport();
-                            ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 360.f, vp->WorkPos.y + 330.f),
-                                                    ImGuiCond_FirstUseEver);
+                            // a material row: its texture's preview while hovered
+                            auto mat_row = [&](const ScoMat& m, const char* id_suffix) {
+                                ImGui::PushID(id_suffix);
+                                ImGui::PushID(m.name.c_str());
+                                if (m.file.empty()) ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.95f, 0.45f, 0.4f, 1.f));
+                                ImGui::BulletText("%s", m.name.c_str());
+                                if (m.file.empty()) ImGui::PopStyleColor();
+                                if (ImGui::IsItemHovered()) {
+                                    ImGui::BeginTooltip();
+                                    if (m.file.empty()) {
+                                        ImGui::TextUnformatted("Textura no encontrada");
+                                    } else {
+                                        const auto pv = ui::texture_preview(m.file);
+                                        if (pv.id != 0 && pv.w > 0 && pv.h > 0) {
+                                            ImGui::Image(static_cast<ImTextureID>(pv.id),
+                                                         ImVec2(static_cast<float>(pv.w), static_cast<float>(pv.h)));
+                                        } else if (pv.failed) {
+                                            ImGui::TextUnformatted("No se pudo leer la textura");
+                                        } else {
+                                            ImGui::TextDisabled("Cargando miniatura...");
+                                        }
+                                        ImGui::TextDisabled("%s", omsi::path_text(m.file.filename()).c_str());
+                                    }
+                                    ImGui::EndTooltip();
+                                }
+                                ImGui::PopID();
+                                ImGui::PopID();
+                            };
+                            ui::float_slot_begin("sco_info", 20);
+                            ImGui::SetNextWindowSizeConstraints(ImVec2(300.f, 0.f), ImVec2(420.f, 560.f));
                             ImGui::SetNextWindowBgAlpha(0.92f);
-                            if (ImGui::Begin("Info .sco###sco_info_win", &s_info_open,
-                                             ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+                            const bool info_drawn = ImGui::Begin("Info .sco###sco_info_win", &s_info_open,
+                                                                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
+                            ui::float_slot_end();
+                            if (info_drawn) {
                                 ImGui::TextUnformatted(st.name.c_str());
                                 ImGui::Text("Id %d   Mallas: %d (%d .o3d, %d .x)", o.id, st.meshes, st.o3d, st.x);
                                 ImGui::Text("Vertices: %llu   Triangulos: %llu", static_cast<unsigned long long>(st.verts),
                                             static_cast<unsigned long long>(st.tris));
-                                ImGui::Text("LODs: %zu", st.lods.size());
-                                for (const auto& [li, lb] : st.lods)
-                                    ImGui::BulletText("LOD %d: %d mallas, screensize %.3f", li, lb.first, lb.second);
-                                ImGui::Text("Texturas: %zu", st.textures.size());
-                                if (!st.textures.empty() && ImGui::TreeNode("##tex_list", "Ver texturas")) {
-                                    for (const auto& t : st.textures) ImGui::BulletText("%s", t.c_str());
-                                    ImGui::TreePop();
+                                // the band the distance cull draws right now (setup_06 keeps it per object; one
+                                // lookup, nothing recomputed)
+                                int lod_now = st.lods.empty() ? 0 : st.lods.begin()->first;
+                                if (const auto ds = s_dc_obj_slot.find(o.id); ds != s_dc_obj_slot.end() &&
+                                                                              ds->second < s_dc_objs.size() &&
+                                                                              s_dc_objs[ds->second].bands.size() > 1)
+                                    lod_now = s_dc_objs[ds->second].pick;
+                                ImGui::SeparatorText("LODs");
+                                for (const auto& [li, lb] : st.lods) {
+                                    char hdr[180]{};
+                                    std::snprintf(hdr, sizeof(hdr), "LOD %d  -  %llu vertices, %llu tris, %d malla(s)%s###lod%d", li,
+                                                  static_cast<unsigned long long>(lb.verts),
+                                                  static_cast<unsigned long long>(lb.tris), lb.meshes,
+                                                  li == lod_now && st.lods.size() > 1 ? "   << visible" : "", li);
+                                    if (li == lod_now && st.lods.size() > 1)
+                                        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.45f, 0.95f, 0.5f, 1.f));
+                                    const bool lod_open =
+                                        ImGui::TreeNodeEx(hdr, li == st.lods.begin()->first ? ImGuiTreeNodeFlags_DefaultOpen : 0);
+                                    if (li == lod_now && st.lods.size() > 1) ImGui::PopStyleColor();
+                                    if (ImGui::IsItemHovered() && lb.screensize > 0.f)
+                                        ImGui::SetTooltip("screensize %.3f", lb.screensize);
+                                    if (lod_open) {
+                                        // LOD -> model (.o3d / .x) -> its textures
+                                        for (std::size_t mi = 0; mi < lb.models.size(); ++mi) {
+                                            const auto& md = lb.models[mi];
+                                            char mhdr[200]{};
+                                            std::snprintf(mhdr, sizeof(mhdr), "%s  -  %llu v, %llu t###mdl%d_%zu", md.file.c_str(),
+                                                          static_cast<unsigned long long>(md.verts),
+                                                          static_cast<unsigned long long>(md.tris), li, mi);
+                                            if (ImGui::TreeNodeEx(mhdr, lb.models.size() == 1 ? ImGuiTreeNodeFlags_DefaultOpen : 0)) {
+                                                if (md.mats.empty()) ImGui::TextDisabled("(sin texturas)");
+                                                for (const auto& m : md.mats) mat_row(m, mhdr);
+                                                ImGui::TreePop();
+                                            }
+                                        }
+                                        ImGui::TreePop();
+                                    }
+                                }
+                                char mh[64]{};
+                                std::snprintf(mh, sizeof(mh), "Materiales (%zu)###sco_mats", st.textures.size());
+                                if (!st.textures.empty() && ImGui::CollapsingHeader(mh)) {
+                                    for (const auto& m : st.textures) mat_row(m, "all");
                                 }
                                 if (st.bw > 0.f || st.bl > 0.f || st.bh > 0.f)
                                     ImGui::Text("Bounding box: %.2f x %.2f x %.2f m", st.bw, st.bl, st.bh);
@@ -4246,9 +4474,11 @@
                         env.sun_dir[0] = sky.sun_x;
                         env.sun_dir[1] = sky.sun_y;
                         env.sun_dir[2] = sky.sun_z;
+                        // Sun colour warms toward orange as it nears the horizon (sunrise / sunset).
+                        const float warm = 1.f - (std::max)(0.f, (std::min)(1.f, sky.elevation_deg / 20.f));
                         env.sun_color[0] = 1.f;
-                        env.sun_color[1] = 0.92f + 0.08f * dusk;
-                        env.sun_color[2] = 0.65f + 0.2f * dusk;
+                        env.sun_color[1] = 0.96f - 0.51f * warm;
+                        env.sun_color[2] = 0.90f - 0.72f * warm;
                         env.sun_intensity = sky.elevation_deg > -1.f ? sun_i : 0.f;
                         // the moon disk where its light comes from (see the moon above)
                         const float ml = (std::max)(1e-4f, std::sqrt(moon_x * moon_x + moon_y * moon_y + moon_z * moon_z));
@@ -4278,6 +4508,20 @@
                         env.haze = fog_k * (std::min)(0.6f, 150.f / (std::max)(1.f, wp.fog_range_m));
                         env.precip_type = wp.precip;
                         env.precip_intensity = wp.precip_intensity;
+                        // Light shafts sample the CSM, so they follow the sun-shadow toggle.
+                        env.god_ray_strength = st.show_sun_shadows ? sun_str : 0.f;
+                        // OMSI_SHAFT_PLUS=1 forces Plus for testing without changing the saved cfg.
+                        const char* shaft_env = std::getenv("OMSI_SHAFT_PLUS");
+                        env.shaft_plus = st.shaft_plus || (shaft_env && shaft_env[0] == '1');
+                        const char* shaft_dbg = std::getenv("OMSI_SHAFT_DEBUG");
+                        env.shaft_debug = shaft_dbg && shaft_dbg[0] == '1';
+                        {
+                            // the terrain under the EYE (the camera's ground_z is the look target's)
+                            float gx_e = 0.f, gy_e = 0.f, gz_e = 0.f;
+                            camera.eye_position(gx_e, gy_e, gz_e);
+                            const auto eye_gz = sample_terrain_editor_xy_opt(gx_e, gy_e);
+                            env.ground_z = eye_gz ? *eye_gz : gz_e - 2.f;
+                        }
                         renderer.set_sky_environment(env);
                     }
                 }

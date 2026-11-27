@@ -92,6 +92,7 @@ add_library(omsi_core
     src/net/coop_tunnel.cpp
     src/editor/editor_tree_billboard.cpp
     src/gfx/gfx_factory.cpp
+    src/gfx/gfx_backend.cpp
     src/gfx/debug_mesh.cpp
     src/gfx/dx12/common/dx12_common.cpp
     src/gfx/dx12/cube/device.cpp
@@ -253,6 +254,15 @@ file(TO_CMAKE_PATH "${CMAKE_SOURCE_DIR}" OMSI_F4_SRC_DIR)
 target_compile_definitions(omsi_f4_viewer PRIVATE "OMSI_F4_SOURCE_DIR=\"${OMSI_F4_SRC_DIR}\"")
 if(WIN32)
     target_sources(omsi_f4_viewer PRIVATE src/app/omsi_f4_viewer.manifest)
+    # Graphics backends (docs/GFX_BACKENDS.md): d3d12.dll / dxgi.dll are delay-loaded so --gfx vulkan can
+    # preload vkd3d-proton + DXVK dxgi from <exe>/vkd3d before the renderer binds to them.
+    target_link_libraries(omsi_f4_viewer PRIVATE delayimp)
+    target_link_options(omsi_f4_viewer PRIVATE "/DELAYLOAD:d3d12.dll" "/DELAYLOAD:dxgi.dll")
+    if(EXISTS "${CMAKE_SOURCE_DIR}/third_party/vkd3d")
+        add_custom_command(TARGET omsi_f4_viewer POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/third_party/vkd3d"
+                    "$<TARGET_FILE_DIR:omsi_f4_viewer>/vkd3d")
+    endif()
 endif()
 
 add_executable(omsi_spline_creator WIN32

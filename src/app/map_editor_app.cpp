@@ -18,6 +18,7 @@
 #include "editor/editor_tree_billboard.hpp"
 #include "gfx/dx12/dx12_texture.hpp"
 #include "gfx/dx12/hello_o3d_renderer.hpp"
+#include "gfx/gfx_backend.hpp"
 #include "input/luna_camera.hpp"
 #include "omsi/cfg_document.hpp"
 #include "omsi/logger.hpp"

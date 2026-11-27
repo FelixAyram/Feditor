@@ -303,6 +303,7 @@ void EditorSidePanel::apply_ui_settings(const map::EditorUiSettings& ui) {
     imgui_state_.timezone_h = ui.timezone_h;
     imgui_state_.weather_id = ui.weather_id;
     imgui_state_.show_sun_shadows = ui.show_sun_shadows;
+    imgui_state_.shaft_plus = ui.shaft_plus;
     imgui_state_.fog_enabled = ui.fog_enabled;
     imgui_state_.parked_cars_on = ui.parked_cars_on;
     imgui_state_.shadow_distance_m = ui.shadow_distance_m;
@@ -435,6 +436,7 @@ void EditorSidePanel::collect_ui_settings(map::EditorUiSettings& out) const {
         out.timezone_h = imgui_state_.timezone_h;
         out.weather_id = imgui_state_.weather_id;
         out.show_sun_shadows = imgui_state_.show_sun_shadows;
+        out.shaft_plus = imgui_state_.shaft_plus;
         out.fog_enabled = imgui_state_.fog_enabled;
         out.parked_cars_on = imgui_state_.parked_cars_on;
         out.shadow_distance_m = imgui_state_.shadow_distance_m;

@@ -130,6 +130,8 @@ struct MapSplineAttachmentInst {
     // AlignTerrain for SA is runtime/editor (Z on heightfield); default off for SA.
     bool align_terrain = false;
     bool is_repeater = false;
+    // [splineAttachement_repeater]: the two lines before the .sco path (written back as read)
+    std::int32_t repeater_head[2]{0, 0};
     // Count line in .map (e.g. 7) — may include empty slots; 0 => use object_text_lines.size().
     std::int32_t object_text_line_count = 0;
     std::vector<std::string> object_text_lines;

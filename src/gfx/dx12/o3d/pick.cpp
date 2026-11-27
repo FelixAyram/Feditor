@@ -333,7 +333,10 @@ std::optional<std::size_t> HelloO3dRenderer::pick_chunk(float mouse_x, float mou
     auto try_chunk = [&](std::size_t i, std::optional<std::size_t>& best, float& best_t, bool triangles_only) {
         if (i >= impl_->mesh_chunks.size()) return;
         const auto& chunk = impl_->mesh_chunks[i];
-        if (!chunk.meta.visible) return;
+        // Editor picks (no mouseevent filter) still reach the entrypoint / carpark helper boxes hidden by
+        // "Car park real": an empty parking space (or one on a spline) was otherwise unclickable.
+        const bool hidden_helper = !require_mouseevent && chunk.editor_helper && chunk.want_visible;
+        if (!chunk.meta.visible && !hidden_helper) return;
         if (require_mouseevent && !chunk.meta.mouseevent_var) return;
         float t = 0.f;
         if (ray_hits_chunk_triangles(ox, oy, oz, dx, dy, dz, chunk, impl_->mesh_chunks, t)) {
@@ -354,6 +357,12 @@ std::optional<std::size_t> HelloO3dRenderer::pick_chunk(float mouse_x, float mou
     }
     if (best && out_t) *out_t = best_t;
     return best;
+}
+
+bool HelloO3dRenderer::chunk_world_transposed(std::size_t chunk_index, float out[16]) const {
+    if (!impl_ || !out || chunk_index >= impl_->mesh_chunks.size()) return false;
+    std::memcpy(out, &impl_->mesh_chunks[chunk_index].local_world_transposed, sizeof(float) * 16);
+    return true;
 }
 
 std::optional<float> HelloO3dRenderer::pick_surface_hit_z(float ox, float oy, float oz, float dx, float dy,

@@ -4,6 +4,7 @@
 #include "gfx/dx12/o3d/internal.hpp"
 #include "gfx/dx12/dx12_helpers.hpp"
 #include "gfx/dx12/dx12_texture.hpp"
+#include "gfx/gfx_backend.hpp"
 #include "omsi/logger.hpp"
 #include "omsi/model_cfg.hpp"
 #include "omsi/visible_runtime.hpp"
@@ -21,6 +22,7 @@
 
 #include <fstream>
 #include <cstring>
+#include <cstdio>
 #include <cmath>
 #include <algorithm>
 #include <chrono>
@@ -44,16 +46,43 @@ bool HelloO3dRenderer::create_device_and_swapchain(HWND__* hwnd) {
     auto& d = *impl_;
     throw_hr(CreateDXGIFactory2(0, IID_PPV_ARGS(d.factory.GetAddressOf())), "CreateDXGIFactory2");
 
-    for (UINT i = 0; d.factory->EnumAdapters1(i, d.adapter.ReleaseAndGetAddressOf()) != DXGI_ERROR_NOT_FOUND; ++i) {
-        DXGI_ADAPTER_DESC1 desc{};
-        d.adapter->GetDesc1(&desc);
-        if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
-        if (SUCCEEDED(D3D12CreateDevice(d.adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(d.device.GetAddressOf()))))
-            break;
+    // Backend (docs/GFX_BACKENDS.md): hardware adapter at FL 11_0 (native D3D12 or vkd3d-proton/Vulkan,
+    // chosen by which d3d12.dll got loaded), or the WARP software adapter.
+    if (gfx::backend::use_warp()) {
+        throw_hr(d.factory->EnumWarpAdapter(IID_PPV_ARGS(d.adapter.ReleaseAndGetAddressOf())), "EnumWarpAdapter");
+        throw_hr(D3D12CreateDevice(d.adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(d.device.GetAddressOf())),
+                 "D3D12CreateDevice(WARP)");
+    } else {
+        for (UINT i = 0; d.factory->EnumAdapters1(i, d.adapter.ReleaseAndGetAddressOf()) != DXGI_ERROR_NOT_FOUND;
+             ++i) {
+            DXGI_ADAPTER_DESC1 desc{};
+            d.adapter->GetDesc1(&desc);
+            if (desc.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) continue;
+            if (SUCCEEDED(D3D12CreateDevice(d.adapter.Get(), D3D_FEATURE_LEVEL_11_0,
+                                            IID_PPV_ARGS(d.device.GetAddressOf()))))
+                break;
+        }
+        if (!d.device)
+            throw_hr(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(d.device.GetAddressOf())),
+                     "D3D12CreateDevice");
     }
-    if (!d.device)
-        throw_hr(D3D12CreateDevice(nullptr, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(d.device.GetAddressOf())),
-                 "D3D12CreateDevice");
+    {
+        DXGI_ADAPTER_DESC1 desc{};
+        if (d.adapter) d.adapter->GetDesc1(&desc);
+        D3D12_FEATURE_DATA_FEATURE_LEVELS fl{};
+        static const D3D_FEATURE_LEVEL kLevels[] = {D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
+                                                    D3D_FEATURE_LEVEL_12_0, D3D_FEATURE_LEVEL_12_1};
+        fl.NumFeatureLevels = 4;
+        fl.pFeatureLevelsRequested = kLevels;
+        d.device->CheckFeatureSupport(D3D12_FEATURE_FEATURE_LEVELS, &fl, sizeof(fl));
+        std::string adapter_name;
+        for (const wchar_t* c = desc.Description; *c; ++c) adapter_name.push_back(*c < 128 ? char(*c) : '?');
+        char fl_txt[16];
+        std::snprintf(fl_txt, sizeof(fl_txt), "%x_%x", (fl.MaxSupportedFeatureLevel >> 12) & 0xF,
+                      (fl.MaxSupportedFeatureLevel >> 8) & 0xF);
+        omsi::log::info(std::string("GFX_DEVICE backend=") + gfx::backend::name(gfx::backend::active()) +
+                        " adapter=\"" + adapter_name + "\" max_fl=" + fl_txt);
+    }
 
     D3D12_COMMAND_QUEUE_DESC queue_desc{};
     queue_desc.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;

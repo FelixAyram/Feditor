@@ -27,6 +27,7 @@
     double parked_scan_t = -1.0, parked_lod_t = -1.0;
     double parked_prune_t = 0.0, parked_log_t = 0.0;
     constexpr float kParkedNear = 450.f, kParkedFar = 600.f;
+    bool parked_helpers_hidden = false; // this frame: the entrypoint / carpark boxes are hidden
 
     auto parked_list = [&](int index) -> const std::vector<std::string>& {
         auto [it, fresh] = parked_lists.try_emplace(index);
@@ -172,14 +173,40 @@
         }
         return -1;
     };
+    // helper boxes shown for one frame because their space is hovered / selected (restored every frame)
+    std::vector<std::pair<std::size_t, std::int32_t>> parked_revealed; // (chunk, space id)
+    parked_hot_hook = [&](std::int32_t oid, float amt, float r, float g, float b) {
+        if (const auto it = parked_cars.find(oid); it != parked_cars.end()) {
+            for (const auto ch : it->second.chunks) renderer.set_chunk_highlight(ch, amt, r, g, b);
+            return;
+        }
+        // no car on it and the boxes hidden: show this space's box so the hover / selection colour is seen
+        if (!parked_helpers_hidden) return;
+        for (const auto& sp : scene_places) {
+            if (!sp.alive || sp.object_id != oid) continue;
+            renderer.set_chunk_editor_helper(sp.chunk, false);
+            renderer.set_chunk_highlight(sp.chunk, amt, r, g, b);
+            parked_revealed.emplace_back(sp.chunk, oid);
+        }
+    };
     auto parked_frame = [&]() {
+        // (only chunks still that space's mesh: a released chunk index may hold another mesh by now)
+        for (const auto& [ch, oid] : parked_revealed)
+            for (const auto& sp : scene_places)
+                if (sp.chunk == ch && sp.object_id == oid && sp.alive) {
+                    renderer.set_chunk_editor_helper(ch, true);
+                    break;
+                }
+        parked_revealed.clear();
         static const int env = [] {
             const char* e = std::getenv("OMSI_PARKED");
             return e && *e ? std::atoi(e) : -1;
         }();
         // one option, "Car park real": the real parked cars, or (off) the spaces' plain helper boxes
         const bool on = env >= 0 ? env > 0 : panel.imgui_state().parked_cars_on;
-        renderer.set_show_editor_helpers(!on);
+        // Vista > Show carpark keeps the boxes on next to the real cars
+        parked_helpers_hidden = on && !panel.imgui_state().show_carpark_helpers;
+        renderer.set_show_editor_helpers(!parked_helpers_hidden);
         if (!on) {
             if (!parked_cars.empty() || !parked_none.empty()) parked_release_all();
             return;

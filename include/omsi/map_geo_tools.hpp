@@ -138,6 +138,7 @@ struct EditorUiSettings {
     float timezone_h = 1.f;
     int weather_id = 0;
     bool show_sun_shadows = true;
+    bool shaft_plus = false;          // light shafts: false = Normal (cheap), true = Plus (more steps, stronger)
     bool fog_enabled = true;          // Vista > Graficos > Niebla
     bool parked_cars_on = true;       // Vista > Car park real (off: the helper boxes)
     float shadow_distance_m = 0.f;    // Vista > Graficos > Distancia de sombras (0 = the visual radius)

@@ -427,11 +427,14 @@ struct EditorSidePanelImGuiState {
     int chrono_date = 0; // the chrono preview shown now (0 = plain map)
     bool ai_traffic_on = false; // Vista > Trafico IA (openOMSI random traffic)
     int ai_traffic_cars = 80;
+    bool show_ai_bus_list = false;     // Vista > Lista buses IA
+    bool follow_ai_bus = false;        // Vista > Seguir bus IA: the camera on a random timetable bus
     bool show_carpark_helpers = false; // Vista > Show carpark: the entrypoint / carpark helper boxes
     bool parked_cars_on = true; // Vista > Autos estacionados ([carpark_p] spaces, parklist_p.txt)
     float timezone_h = 1.f;
     int weather_id = 0;
     bool show_sun_shadows = true;
+    bool shaft_plus = false;
     bool fog_enabled = true;          // Vista > Graficos > Niebla
     float shadow_distance_m = 0.f;    // Vista > Graficos > Distancia de sombras (0 = the visual radius)
     std::uint32_t shadow_map_size = 4096;

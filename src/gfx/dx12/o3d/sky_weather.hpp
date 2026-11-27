@@ -34,16 +34,21 @@ struct SwCbCpu {
     float star_cfg[4];             // x star radius px, y star brightness, z moon intensity, w horizon haze
     float fog[4];                  // rgb fog colour, w density (1/m)
     float moon_dir[4];             // xyz toward moon
-    float extra[4];                // x cloud texture uses alpha, y precip intensity, z precip type, w unused
+    float extra[4];                // x cloud alpha, y precip intensity, z precip type, w god-ray strength (corona pass: count)
+    DirectX::XMFLOAT4X4 inv_vp;    // inverse view-projection (same transposed convention), for light shafts
+    float shaft[4];               // x steps, y scatter strength, z max distance (m), w HG g
+    float shaft2[4];              // x side-visibility floor, y dust density modulation, z dust drift speed
+    float shaft3[4];              // x ground height (m)
 };
-static_assert(sizeof(SwCbCpu) == 272, "SwCbCpu layout must match kSwCbHlsl");
+static_assert(sizeof(SwCbCpu) == 384, "SwCbCpu layout must match kSwCbHlsl");
 
 inline constexpr std::uint32_t kSwCbStride = 8192;  // CBV alignment 256; 8 KB: the corona pass's list (96 x 48 B) follows the common part
 inline constexpr std::uint32_t kSwPassSky = 0;
 inline constexpr std::uint32_t kSwPassWater = 1;
 inline constexpr std::uint32_t kSwPassPrecip = 2;
 inline constexpr std::uint32_t kSwPassCorona = 3;
-inline constexpr std::uint32_t kSwPassCount = 4;
+inline constexpr std::uint32_t kSwPassShafts = 4;
+inline constexpr std::uint32_t kSwPassCount = 5;
 inline constexpr std::uint32_t kSwCoronaMax = 96; // lit [light_enh] / [light_enh_2] glows a frame (3 float4 each)
 // Shader-visible SRV table (contiguous, see sky.cpp): day, dusk, night, cumulus1, cumulus3, ovc1, ovc2,
 // water base, water bump, water envmap.
@@ -68,7 +73,11 @@ cbuffer SwCB : register(b0) {
     float4 gStarCfg;    // x star radius px, y star brightness, z moon intensity, w haze
     float4 gFog;        // rgb, w density
     float4 gMoonDir;    // xyz
-    float4 gExtra;      // x cloud alpha, y precip intensity, z precip type, w corona count
+    float4 gExtra;      // x cloud alpha, y precip intensity, z precip type, w god-ray strength (corona pass: count)
+    float4x4 gInvViewProj;
+    float4 gShaftCfg;   // x steps, y scatter strength, z max distance, w HG g
+    float4 gShaftCfg2;  // x side floor, y dust modulation, z dust drift, w debug (raw visibility)
+    float4 gShaftCfg3;  // x ground height
     float4 gCorona[288]; // corona pass: per glow pos+size, dir (w: 1 directional), rgb+intensity
 };
 Texture2D gTex[10] : register(t0);
@@ -91,6 +100,10 @@ struct SkyWeatherGpu {
     ComPtr<ID3D12PipelineState> water_pso;
     ComPtr<ID3D12PipelineState> precip_pso;
     ComPtr<ID3D12PipelineState> corona_pso;
+    ComPtr<ID3D12PipelineState> shaft_pso;
+    ComPtr<ID3D12PipelineState> shaft_pso_ms;        // MSAA scene depth (Texture2DMS, sample 0)
+    ComPtr<ID3D12PipelineState> shaft_debug_pso_ms;
+    ComPtr<ID3D12PipelineState> shaft_debug_pso; // same shader, no blending (debug readouts)
     bool pipelines_ready = false;
 
     ComPtr<ID3D12Resource> cb_ring; // kFrameCount * kSwPassCount * kSwCbStride

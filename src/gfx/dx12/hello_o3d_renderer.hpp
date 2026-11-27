@@ -196,6 +196,8 @@ public:
     [[nodiscard]] bool is_gpu_idle() const;
     void translate_chunk(std::size_t chunk_index, float dx, float dy, float dz);
     void set_chunk_world_matrix(std::size_t chunk_index, const float world_transposed[16]);
+    // The chunk's current world matrix (transposed, as set_chunk_world_matrix takes it). False: no such chunk.
+    [[nodiscard]] bool chunk_world_transposed(std::size_t chunk_index, float out[16]) const;
     void set_chunk_visible(std::size_t chunk_index, bool visible);
     // Vegetation (tree billboards): vertex wind sway + tilted, translucent lighting.
     void set_chunk_wind_sway(std::size_t chunk_index, bool on);
@@ -336,6 +338,10 @@ public:
         int precip_type = 0;                // 0 none, 1 rain, 2 snow
         float precip_intensity = 0.f;       // 0..1
         float cloud_brightness = 1.f;
+        float god_ray_strength = 0.f;       // 0 = off; light shafts need sun shadows (CSM) enabled
+        bool shaft_plus = false;            // false = Normal (8 steps), true = Plus (32 steps, stronger scatter)
+        float ground_z = -1.0e9f;           // ground height for the light shafts (downward rays end there)
+        bool shaft_debug = false;           // OMSI_SHAFT_DEBUG=1: output raw shadow visibility instead of scatter
     };
     void set_sky_environment(const SkyEnvironment& env);
 

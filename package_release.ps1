@@ -10,7 +10,7 @@ New-Item -ItemType Directory -Path $stage | Out-Null
 Get-ChildItem $BuildDir -File | Where-Object {
     ($_.Extension -in ".exe", ".dll") -and ($_.Name -notlike "*.locked_*")
 } | Copy-Item -Destination $stage
-foreach ($d in "assets", "tools", "shaders", "third_party") {
+foreach ($d in "assets", "tools", "shaders", "third_party", "vkd3d") {
     $p = Join-Path $BuildDir $d
     if (Test-Path $p) { Copy-Item $p -Destination (Join-Path $stage $d) -Recurse }
 }

@@ -597,7 +597,7 @@ void HelloO3dRenderer::populate_command_list() {
     d.frame_drew_sway = false;
     d.frame_drew_water = d.sw.water_index_count > 0;
     // CSM depth pass before color (uses upper half of instance ring).
-    int csm_cascade_now = -1;
+    int csm_cascade_now = -1, csm_cascade_also = -1;
     bool csm_pending = false;
     d.csm_list_this_frame = false;
     (void)ensure_csm_resources(d);
@@ -628,11 +628,13 @@ void HelloO3dRenderer::populate_command_list() {
             csm_cascade_now = -1;
             csm_pending = true;
         } else {
-            if (t & 1u) csm_cascade_now = 0;
-            else if ((t & 3u) == 0u) csm_cascade_now = 1;
-            else if ((t & 7u) == 2u) csm_cascade_now = 2;
-            else csm_cascade_now = -1;
-            csm_pending = csm_cascade_now >= 0; // recorded on a worker below, once the terrain LOD is decided
+            // The near cascade every frame (redrawn only when stale - something in it moved): drawn every second
+            // frame, the shadows of the moving AI cars stood still one frame in two and jumped - they flickered
+            // and popped over the cars while they drove. The middle and far ones keep their turns.
+            csm_cascade_now = 0;
+            if ((t & 3u) == 0u) csm_cascade_also = 1;
+            else if ((t & 7u) == 2u) csm_cascade_also = 2;
+            csm_pending = true; // recorded on a worker below, once the terrain LOD is decided
         }
     } else if (d.csm_ready) {
         update_csm_matrices(d);
@@ -667,6 +669,7 @@ void HelloO3dRenderer::populate_command_list() {
                                 : offset_cpu_handle(d.rtv_heap->GetCPUDescriptorHandleForHeapStart(),
                                                     rtv_descriptor_size_, frame_index_);
     fr.command_list->OMSetRenderTargets(1, &rtv_handle, FALSE, &d.dsv_cpu);
+    d.main_rtv_cpu = rtv_handle; // light shafts rebind this RTV with the read-only depth view
 
     const float clear_color[] = {d.clear_rgb[0], d.clear_rgb[1], d.clear_rgb[2], 1.f};
     fr.command_list->ClearRenderTargetView(rtv_handle, clear_color, 0, nullptr);
@@ -1286,9 +1289,28 @@ void HelloO3dRenderer::populate_command_list() {
                 ++i;
                 continue;
             }
+            // An instanced group draws every member with the head's batches: only clones whose batches show the
+            // same textures (srv tables) and UV / alpha state may join. Each AI car has its own paint scheme and
+            // its own lamp textures ([matl_change] variants): grouped on the vertex buffer alone, every car of a
+            // type took the paint and the lamps of whichever clone headed the group - cars changed their skin in
+            // front of the camera and never showed their own headlights / blinkers.
+            const auto& head_batches = batch_getter(head);
+            auto same_look = [&](const GpuMeshChunk& c) {
+                if (shadow_pass) return true; // (depth only)
+                const auto& cb = batch_getter(c);
+                if (cb.size() != head_batches.size()) return false;
+                for (std::size_t q = 0; q < cb.size(); ++q) {
+                    const auto& a = cb[q];
+                    const auto& b = head_batches[q];
+                    if (a.srv_gpu.ptr != b.srv_gpu.ptr || a.uv_off_x != b.uv_off_x || a.uv_off_y != b.uv_off_y ||
+                        a.alpha_scale != b.alpha_scale)
+                        return false;
+                }
+                return true;
+            };
             std::size_t j = i + 1;
             while (j < indices.size() && d.mesh_chunks[indices[j]].vertex_buffer_view.BufferLocation == vb &&
-                   !per_chunk_state(d.mesh_chunks[indices[j]]))
+                   !per_chunk_state(d.mesh_chunks[indices[j]]) && same_look(d.mesh_chunks[indices[j]]))
                 ++j;
             const std::size_t group_n = j - i;
             if (group_n < 2) {
@@ -1662,8 +1684,8 @@ void HelloO3dRenderer::populate_command_list() {
             auto job = std::make_shared<std::atomic<int>>(0);
             d.csm_job = job;
             auto* dd = &d;
-            const int ci = csm_cascade_now;
-            auto body = [dd, fi, ci, job]() {
+            const int ci = csm_cascade_now, ci2 = csm_cascade_also;
+            auto body = [dd, fi, ci, ci2, job]() {
                 int expect = 0;
                 if (!job->compare_exchange_strong(expect, 3)) return; // (the other side has it)
                 int result = 2;
@@ -1671,7 +1693,7 @@ void HelloO3dRenderer::populate_command_list() {
                     auto& D = *dd;
                     throw_hr(D.csm_alloc[fi]->Reset(), "csm alloc reset");
                     throw_hr(D.csm_list[fi]->Reset(D.csm_alloc[fi].Get(), nullptr), "csm list reset");
-                    render_csm_pass(D, D.csm_list[fi].Get(), fi, ci); // (its caster pass in parallel: the caller helps, no wait-lock)
+                    render_csm_pass(D, D.csm_list[fi].Get(), fi, ci, false, ci2); // (its caster pass in parallel: the caller helps, no wait-lock)
                     throw_hr(D.csm_list[fi]->Close(), "csm list close");
                     result = 1;
                 } catch (...) {
@@ -1681,7 +1703,7 @@ void HelloO3dRenderer::populate_command_list() {
             d.csm_job_body = body;
             ShadowThread::get().submit(body);
         } else {
-            render_csm_pass(d, fr.command_list.Get(), frame_index_, csm_cascade_now); // (no list: as before)
+            render_csm_pass(d, fr.command_list.Get(), frame_index_, csm_cascade_now, false, csm_cascade_also); // (no list: as before)
         }
     }
 
@@ -1876,6 +1898,15 @@ void HelloO3dRenderer::populate_command_list() {
         const auto va = d.mesh_chunks[a].vertex_buffer_view.BufferLocation;
         const auto vb = d.mesh_chunks[b].vertex_buffer_view.BufferLocation;
         if (va != vb) return va < vb;
+        // (clones that look the same side by side: an instanced group takes only those - see draw_list_instanced)
+        auto look = [&](std::size_t c) -> std::uint64_t {
+            const auto& ch = d.mesh_chunks[c];
+            if (!ch.opaque_batches.empty()) return ch.opaque_batches.front().srv_gpu.ptr;
+            if (!ch.alpha_batches.empty()) return ch.alpha_batches.front().srv_gpu.ptr;
+            return 0;
+        };
+        const auto la = look(a), lb = look(b);
+        if (la != lb) return la < lb;
         return a < b;
     });
     d.perf_sort_ms =
@@ -2184,6 +2215,9 @@ void HelloO3dRenderer::populate_command_list() {
                      static_cast<float>(scene_vp.Height));
     draw_corona_pass(d, fr.command_list.Get(), frame_index_, static_cast<float>(scene_vp.Width),
                      static_cast<float>(scene_vp.Height));
+    // Volumetric light shafts: raymarch the CSM from the camera (additive, after the scene).
+    draw_shaft_pass(d, fr.command_list.Get(), frame_index_, static_cast<float>(scene_vp.Width),
+                    static_cast<float>(scene_vp.Height));
 
     rec_lap(6, 0);
     d.perf_record_ms =

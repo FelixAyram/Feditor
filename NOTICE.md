@@ -33,6 +33,8 @@ openOMSI repository at the pinned submodule commit.
 | Component | Licence |
 |---|---|
 | Microsoft Visual C++ runtime (`msvcp140*.dll`, `vcruntime140*.dll`) | Microsoft Visual Studio redistributable files |
+| vkd3d-proton 3.1 (`vkd3d/d3d12.dll`, `vkd3d/d3d12core.dll`, unmodified; source: https://github.com/HansKristian-Work/vkd3d-proton/releases/tag/v3.1) | LGPL-2.1-or-later — loaded at run time only for `--gfx vulkan`; replaceable with your own build |
+| DXVK 3.1.1 (`vkd3d/dxgi.dll`, unmodified; https://github.com/doitsujin/dxvk/releases/tag/v3.1.1) | zlib |
 | Python 3 runtime (frozen tools in `tools\`) | PSF License |
 | PyInstaller bootloader | GPL-2.0 with the PyInstaller bootloader exception |
 | pygame / SDL2 | LGPL-2.1 / zlib |

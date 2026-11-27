@@ -476,14 +476,21 @@ std::optional<MapSplineAttachmentInst> parse_spline_attachment_at_tag_line(
     std::size_t offset_along_bl = 0;
     std::size_t rotation_y_bl = 0;
     if (is_repeater) {
-        if (bl.size() < 9) return std::nullopt;
-        spline_index_bl = 2;
+        // 0 / a / b / sco / id / spline index / x / y / along / rot ... : the [splineAttachement] body with two
+        // extra lines in front (kept as read). The spline index is the line after the id, as in the plain
+        // record (Aachen tile_1097_10761: three Weidezaun_Pfost repeaters share index 11 = Weidezaun.sli).
+        // Read one line early, x got the spline index, the height got x (a car_park 4 m up in the air)
+        // and the heading got the along offset.
+        if (bl.size() < 10) return std::nullopt;
         path_bl = 3;
         instance_id_bl = 4;
-        offset_x_bl = 5;
-        offset_y_bl = 6;
-        offset_along_bl = 7;
-        rotation_y_bl = 8;
+        spline_index_bl = 5;
+        offset_x_bl = 6;
+        offset_y_bl = 7;
+        offset_along_bl = 8;
+        rotation_y_bl = 9;
+        att.repeater_head[0] = parse_value<std::int32_t>(clean_cfg_value(lines[bl[1]]));
+        att.repeater_head[1] = parse_value<std::int32_t>(clean_cfg_value(lines[bl[2]]));
     } else {
         path_bl = 1;
         instance_id_bl = 2;

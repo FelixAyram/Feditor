@@ -22,6 +22,7 @@
 #include <imgui.h>
 #include <Windows.h>
 #include <commdlg.h>
+#include "editor_map_text_editor.hpp"
 
 
 #include "omsi/utf8_win32.hpp"
@@ -3520,7 +3521,10 @@ void draw_shortcuts_editor(const MapEditorImGuiArgs& args) {
     EditorShortcutTable& tab = *args.shortcuts;
     tab.capture_tick();
     ImGui::SetNextWindowSize(ImVec2(520.f, 460.f), ImGuiCond_FirstUseEver);
-    if (!ImGui::Begin(i18n::tr_lit("Atajos del editor"), &st.shortcuts_editor_open)) {
+    float_slot_begin("atajos_editor", 80);
+    const bool sc_drawn = ImGui::Begin(i18n::tr_lit("Atajos del editor"), &st.shortcuts_editor_open);
+    float_slot_end();
+    if (!sc_drawn) {
         ImGui::End();
         return;
     }
@@ -4674,6 +4678,232 @@ void set_thumb_texture_provider(std::function<std::uint64_t(const std::filesyste
     g_thumb_tex_provider = std::move(fn);
 }
 
+namespace {
+struct FloatSlot {
+    std::string key;
+    int order = 0;
+    ImVec2 size{0.f, 0.f}; // measured last frame (0: not yet)
+    ImVec2 pos{0.f, 0.f};  // animated, what the window is drawn at
+    bool has_pos = false;
+    int last_frame = -1000; // last frame the window was drawn
+    bool ghosted = true;    // its close animation was started (or it never closed)
+};
+std::vector<FloatSlot> g_float_slots;
+// A closed window slides out to the right and fades (drawn as its frame on the foreground list).
+struct FloatGhost {
+    ImVec2 pos, size;
+    float t = 0.f;
+};
+std::vector<FloatGhost> g_float_ghosts;
+int g_float_cur = -1;
+
+// Slot targets for the windows open now (drawn this or the last frame), in order: a column against the right
+// edge from the top down; one that does not fit below starts a new column to the left. A slot that would land
+// on the .map viewer goes below it, or to its left when there is no room below.
+ImVec2 float_slot_target(std::size_t want) {
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    const int fr = ImGui::GetFrameCount();
+    constexpr float kGap = 8.f, kMargin = 12.f, kStatusH = 96.f;
+    const float top = vp->WorkPos.y + kMargin;
+    const float bottom = vp->WorkPos.y + vp->WorkSize.y - kStatusH;
+    float vl = 0.f, vt = 0.f, vr = 0.f, vb = 0.f;
+    const bool viewer = map_text_editor_client_rect(vl, vt, vr, vb);
+    std::vector<std::size_t> order;
+    for (std::size_t i = 0; i < g_float_slots.size(); ++i)
+        if (g_float_slots[i].last_frame >= fr - 1 || i == want) order.push_back(i);
+    std::stable_sort(order.begin(), order.end(),
+                     [](std::size_t a, std::size_t b) { return g_float_slots[a].order < g_float_slots[b].order; });
+    float col_right = vp->WorkPos.x + vp->WorkSize.x - kMargin;
+    float col_left = col_right;
+    float y = top;
+    ImVec2 out{col_right - 320.f, top};
+    for (const std::size_t i : order) {
+        const auto& sl = g_float_slots[i];
+        const float w = sl.size.x > 1.f ? sl.size.x : 320.f;
+        const float h = sl.size.y > 1.f ? sl.size.y : 160.f;
+        auto hits_viewer = [&](float x0, float y0) {
+            return viewer && x0 < vr + kGap && x0 + w > vl - kGap && y0 < vb + kGap && y0 + h > vt - kGap;
+        };
+        if (y > top && y + h > bottom) { // next column
+            col_right = col_left - kGap;
+            col_left = col_right;
+            y = top;
+        }
+        float x = col_right - w;
+        if (hits_viewer(x, y)) {
+            if (vb + kGap + h <= bottom) {
+                y = vb + kGap;
+            } else {
+                col_right = vl - kGap;
+                col_left = col_right;
+                x = col_right - w;
+                y = top;
+            }
+        }
+        if (i == want) out = ImVec2(x, y);
+        col_left = (std::min)(col_left, x);
+        y += h + kGap;
+    }
+    return out;
+}
+} // namespace
+
+void float_layout_frame() {
+    const int fr = ImGui::GetFrameCount();
+    for (auto& sl : g_float_slots) {
+        if (sl.last_frame == fr - 2 && !sl.ghosted && sl.size.x > 1.f) {
+            g_float_ghosts.push_back({sl.pos, sl.size, 0.f});
+            sl.ghosted = true;
+        }
+    }
+    if (g_float_ghosts.empty()) return;
+    const float dt = (std::min)(0.1f, (std::max)(0.f, ImGui::GetIO().DeltaTime));
+    ImDrawList* fg = ImGui::GetForegroundDrawList();
+    const ImGuiStyle& sty = ImGui::GetStyle();
+    const float title_h = ImGui::GetFrameHeight();
+    for (auto it = g_float_ghosts.begin(); it != g_float_ghosts.end();) {
+        it->t += dt / 0.22f;
+        if (it->t >= 1.f) {
+            it = g_float_ghosts.erase(it);
+            continue;
+        }
+        const float e = it->t * it->t * (3.f - 2.f * it->t); // smoothstep
+        const float a = 1.f - e;
+        const ImVec2 p0(it->pos.x + 70.f * e, it->pos.y);
+        const ImVec2 p1(p0.x + it->size.x, p0.y + it->size.y * (1.f - 0.25f * e));
+        ImVec4 bg = sty.Colors[ImGuiCol_WindowBg];
+        ImVec4 tb = sty.Colors[ImGuiCol_TitleBg];
+        bg.w = 0.92f * a;
+        tb.w *= a;
+        fg->AddRectFilled(p0, p1, ImGui::GetColorU32(bg), sty.WindowRounding);
+        fg->AddRectFilled(p0, ImVec2(p1.x, (std::min)(p1.y, p0.y + title_h)), ImGui::GetColorU32(tb), sty.WindowRounding,
+                          ImDrawFlags_RoundCornersTop);
+        ++it;
+    }
+}
+
+void float_slot_begin(const char* key, int order) {
+    const int fr = ImGui::GetFrameCount();
+    std::size_t idx = g_float_slots.size();
+    for (std::size_t i = 0; i < g_float_slots.size(); ++i)
+        if (g_float_slots[i].key == key) idx = i;
+    if (idx == g_float_slots.size()) {
+        g_float_slots.push_back({});
+        g_float_slots.back().key = key;
+    }
+    auto& sl = g_float_slots[idx];
+    sl.order = order;
+    const bool reopened = sl.last_frame < fr - 1;
+    const ImVec2 target = float_slot_target(idx);
+    const ImGuiViewport* vp = ImGui::GetMainViewport();
+    if (!sl.has_pos || reopened) {
+        // (re)opened: slides in from the right edge at its slot's height
+        sl.pos = ImVec2(vp->WorkPos.x + vp->WorkSize.x, target.y);
+        sl.has_pos = true;
+    } else {
+        const float dt = (std::min)(0.1f, (std::max)(0.f, ImGui::GetIO().DeltaTime));
+        const float k = 1.f - std::exp(-dt * 14.f);
+        sl.pos.x += (target.x - sl.pos.x) * k;
+        sl.pos.y += (target.y - sl.pos.y) * k;
+        if (std::fabs(target.x - sl.pos.x) < 0.5f) sl.pos.x = target.x;
+        if (std::fabs(target.y - sl.pos.y) < 0.5f) sl.pos.y = target.y;
+    }
+    ImGui::SetNextWindowPos(ImVec2(std::floor(sl.pos.x), std::floor(sl.pos.y)), ImGuiCond_Always);
+    g_float_cur = static_cast<int>(idx);
+}
+
+void float_slot_end() {
+    if (g_float_cur < 0 || g_float_cur >= static_cast<int>(g_float_slots.size())) return;
+    auto& sl = g_float_slots[static_cast<std::size_t>(g_float_cur)];
+    sl.size = ImGui::GetWindowSize();
+    sl.last_frame = ImGui::GetFrameCount();
+    sl.ghosted = false;
+    g_float_cur = -1;
+}
+
+TexturePreview texture_preview(const std::filesystem::path& tex) {
+    // A texture's preview: decoded and shrunk to 128 px on a worker thread (a 2048 px .dds took tens of ms on
+    // the UI thread), written as a small TGA in the thumb folder, then shown through the thumb SRV provider.
+    struct Entry {
+        std::atomic<int> state{0}; // 0 decoding, 1 ready, 2 failed
+        std::filesystem::path tga;
+        int w = 0, h = 0;
+    };
+    static std::mutex s_mu;
+    static std::unordered_map<std::wstring, std::shared_ptr<Entry>> s_prev;
+    TexturePreview out;
+    if (tex.empty()) {
+        out.failed = true;
+        return out;
+    }
+    std::shared_ptr<Entry> e;
+    {
+        std::lock_guard<std::mutex> lk(s_mu);
+        auto& slot = s_prev[tex.native()];
+        if (!slot) {
+            slot = std::make_shared<Entry>();
+            std::uint64_t hs = 1469598103934665603ull;
+            for (const wchar_t c : tex.native()) {
+                hs ^= static_cast<std::uint64_t>(c);
+                hs *= 1099511628211ull;
+            }
+            char buf[48]{};
+            std::snprintf(buf, sizeof(buf), "texprev_%016llx.tga", static_cast<unsigned long long>(hs));
+            slot->tga = catalog_thumbs_dir() / buf;
+            std::thread([e2 = slot, src = tex]() {
+                const auto img = omsi::gfx::dx12::load_image_cpu_rgba(src);
+                if (!img || img->width == 0 || img->height == 0 ||
+                    img->rgba.size() < static_cast<std::size_t>(img->width) * img->height * 4u) {
+                    e2->state.store(2);
+                    return;
+                }
+                const float k = 128.f / static_cast<float>((std::max)(img->width, img->height));
+                const int w = (std::max)(1, static_cast<int>(static_cast<float>(img->width) * (std::min)(1.f, k)));
+                const int h = (std::max)(1, static_cast<int>(static_cast<float>(img->height) * (std::min)(1.f, k)));
+                std::vector<ImU32> px(static_cast<std::size_t>(w * h));
+                for (int y = 0; y < h; ++y)
+                    for (int x = 0; x < w; ++x) {
+                        // box filter over the source texels of this preview pixel
+                        const std::uint32_t x0 = static_cast<std::uint32_t>(x) * img->width / static_cast<std::uint32_t>(w);
+                        const std::uint32_t x1 = (std::max)(x0 + 1, static_cast<std::uint32_t>(x + 1) * img->width / static_cast<std::uint32_t>(w));
+                        const std::uint32_t y0 = static_cast<std::uint32_t>(y) * img->height / static_cast<std::uint32_t>(h);
+                        const std::uint32_t y1 = (std::max)(y0 + 1, static_cast<std::uint32_t>(y + 1) * img->height / static_cast<std::uint32_t>(h));
+                        std::uint32_t acc[4]{}, n = 0;
+                        for (std::uint32_t sy = y0; sy < y1 && sy < img->height; sy += 1 + (y1 - y0) / 4)
+                            for (std::uint32_t sx = x0; sx < x1 && sx < img->width; sx += 1 + (x1 - x0) / 4) {
+                                const std::uint8_t* t = img->rgba.data() + (static_cast<std::size_t>(sy) * img->width + sx) * 4u;
+                                for (int c = 0; c < 4; ++c) acc[c] += t[c];
+                                ++n;
+                            }
+                        if (n == 0) n = 1;
+                        // alpha shown over a checker-free dark grey (cutout leaves read as leaves)
+                        const std::uint32_t a = acc[3] / n;
+                        auto mix = [&](std::uint32_t c) { return static_cast<int>((c / n * a + 40u * (255u - a)) / 255u); };
+                        px[static_cast<std::size_t>(y * w + x)] = IM_COL32(mix(acc[0]), mix(acc[1]), mix(acc[2]), 255);
+                    }
+                if (!write_tga_wh(e2->tga, px, w, h)) {
+                    e2->state.store(2);
+                    return;
+                }
+                e2->w = w;
+                e2->h = h;
+                e2->state.store(1);
+            }).detach();
+        }
+        e = slot;
+    }
+    const int st = e->state.load();
+    if (st == 2) {
+        out.failed = true;
+        return out;
+    }
+    if (st != 1 || !g_thumb_tex_provider) return out;
+    out.id = g_thumb_tex_provider(e->tga);
+    out.w = e->w;
+    out.h = e->h;
+    return out;
+}
+
 void set_catalog_thumb_srv_evictor(std::function<void(const std::filesystem::path&)> fn) {
     g_thumb_srv_evict = std::move(fn);
 }
@@ -4705,6 +4935,7 @@ void build_map_editor_imgui_ui(const MapEditorImGuiArgs& args) {
     if (!args.panel || g_hide_all_ui) return;
     auto _w_ui = omsi::MainThreadWatchdog::active_scope("imgui.build_editor_panel_ui");
     EditorSidePanel& panel = *args.panel;
+    float_layout_frame(); // floating window slots: close animations
     load_editor_docks(panel.imgui_state());
     static int last_cat_sel = -1;
     static int last_obj_inst_sel = -1;
@@ -4764,6 +4995,9 @@ void build_map_editor_imgui_ui(const MapEditorImGuiArgs& args) {
                 if (ImGui::MenuItem(i18n::tr_lit("Opciones editor…"))) {
                     panel.imgui_state().options_editor_open = true;
                 }
+                // the timetable buses under way (AI traffic): Seguir / Conducir per bus
+                if (ImGui::MenuItem(i18n::tr_lit("Buses IA (horario)…"), nullptr, panel.imgui_state().show_ai_bus_list))
+                    panel.imgui_state().show_ai_bus_list = !panel.imgui_state().show_ai_bus_list;
                 ImGui::Separator();
                 {
                     const bool same_ok = !args.group_same_name.empty() &&
@@ -5020,6 +5254,7 @@ void build_map_editor_imgui_ui(const MapEditorImGuiArgs& args) {
                 }
                 if (ImGui::BeginMenu(i18n::tr_lit("Graficos"))) {
                     vista_changed |= ImGui::MenuItem(i18n::tr_lit("Sombras solares"), nullptr, &st.show_sun_shadows);
+                    vista_changed |= ImGui::MenuItem(i18n::tr_lit("Rayos de luz Plus (mas costoso)"), nullptr, &st.shaft_plus);
                     {
                         // 0 = as far as the visual radius
                         float dist = st.shadow_distance_m > 0.f ? st.shadow_distance_m : 0.f;
@@ -5049,6 +5284,12 @@ void build_map_editor_imgui_ui(const MapEditorImGuiArgs& args) {
                     ImGui::SetNextItemWidth(180.f);
                     ImGui::SliderInt("##ai_cars", &st.ai_traffic_cars, 5, 400, "%d autos");
                     vista_changed |= ImGui::Checkbox(i18n::tr_lit("Car park real"), &st.parked_cars_on);
+                    vista_changed |= ImGui::Checkbox(i18n::tr_lit("Show carpark"), &st.show_carpark_helpers);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", i18n::tr_lit("Las cajas de ayuda de los estacionamientos [carpark_p] y entrypoints."));
+                    ImGui::Checkbox(i18n::tr_lit("Seguir bus IA"), &st.follow_ai_bus);
+                    if (ImGui::IsItemHovered())
+                        ImGui::SetTooltip("%s", i18n::tr_lit("La camara sigue a un bus de servicio al azar (horario del mapa)."));
                     if (ImGui::IsItemHovered())
                         ImGui::SetTooltip("%s", i18n::tr_lit("Activado: un auto real de la parklist en cada [carpark_p], "
                                                              "como OMSI. Desactivado: las cajas comunes del editor."));
@@ -5281,13 +5522,14 @@ void build_map_editor_imgui_ui(const MapEditorImGuiArgs& args) {
     ImGui::End();
 
     if (!args.spline_attach_hud.empty()) {
-        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 16.f, vp->WorkPos.y + 16.f),
-                                ImGuiCond_Always, ImVec2(1.f, 0.f));
+        float_slot_begin("attachados", 10);
         ImGui::SetNextWindowSizeConstraints(ImVec2(220.f, 80.f), ImVec2(360.f, 420.f));
         ImGui::SetNextWindowBgAlpha(0.92f);
-        if (ImGui::Begin(i18n::tr_lit("Attachados"), nullptr,
-                         ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
-                             ImGuiWindowFlags_NoSavedSettings)) {
+        const bool sa_hud_open = ImGui::Begin(i18n::tr_lit("Attachados"), nullptr,
+                                              ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse |
+                                                  ImGuiWindowFlags_NoSavedSettings);
+        float_slot_end();
+        if (sa_hud_open) {
             if (args.spline_attach_parent_id > 0)
                 ImGui::Text("Spline id=%d", args.spline_attach_parent_id);
             ImGui::TextDisabled("%zu bloque(s)", args.spline_attach_hud.size());

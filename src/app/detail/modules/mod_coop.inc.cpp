@@ -928,7 +928,8 @@
                 }
             }
             if (!lmb && walk_lmb_was && !over_ui) {
-                if (!walk_skip_hold && edit_mode == EditMode::None) walk_hold_pending = 2;
+                // the click only selects (the editor's own click at the crosshair); G moves it, as in the
+                // normal view (it used to start carrying whatever was clicked)
                 walk_skip_hold = false;
             }
             if (rmb && !walk_rmb_was && (walk_hold_id != 0 || walk_hold_bus)) {
@@ -948,9 +949,13 @@
             std::vector<std::size_t> excl;
             av_chunks_of(excl);
             excl.insert(excl.end(), walk_veg_excl.begin(), walk_veg_excl.end());
-            if (walk_hold_id != 0)
+            std::int32_t aim_skip_id = walk_hold_id;
+            if (aim_skip_id == 0 && (edit_mode == EditMode::Grab || edit_mode == EditMode::GrabHeight) &&
+                selected_object >= 0 && static_cast<std::size_t>(selected_object) < edit_objects.size())
+                aim_skip_id = edit_objects[static_cast<std::size_t>(selected_object)].id; // G: not onto itself
+            if (aim_skip_id != 0)
                 for (const auto& sp : scene_places)
-                    if (sp.alive && sp.object_id == walk_hold_id) excl.push_back(sp.chunk);
+                    if (sp.alive && sp.object_id == aim_skip_id) excl.push_back(sp.chunk);
             if (walk_hold_bus && omsi_bus) {
                 for (const auto ch : omsi_bus->chunks)
                     if (ch != kNoChunk) excl.push_back(ch);

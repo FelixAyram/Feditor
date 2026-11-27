@@ -457,7 +457,7 @@
             const auto& sp = edit_splines[i];
             if (sp.sli_path.empty()) continue;
             // a query within 50 m of the centre takes splines starting within 80 m of it
-            if (std::fabs(sp.position.x - cx) > 130.f || std::fabs(sp.position.y - cy) > 130.f) continue;
+            if (std::fabs(sp.position.x - cx) > 130.f + sp.length || std::fabs(sp.position.y - cy) > 130.f + sp.length) continue;
             auto def = spline::load_sli_shared(sp.sli_path);
             if (!def || def->only_editor || def->height_profiles.empty()) continue;
             bus_spl_cands.push_back({i, sp.id, std::move(def)});
@@ -492,7 +492,7 @@
                     const auto& sp = edit_splines[i];
                     if (sp.sli_path.empty()) continue;
                     // (a spline starting within 80 m + the half cell of any point in it, as the bus candidates)
-                    if (std::fabs(sp.position.x - ccx) > 130.f || std::fabs(sp.position.y - ccy) > 130.f) continue;
+                    if (std::fabs(sp.position.x - ccx) > 130.f + sp.length || std::fabs(sp.position.y - ccy) > 130.f + sp.length) continue;
                     auto def = spline::load_sli_shared(sp.sli_path);
                     if (!def || def->only_editor || def->height_profiles.empty()) continue;
                     cell.cands.push_back({i, sp.id, std::move(def)});
@@ -516,7 +516,7 @@
             if (c.idx >= edit_splines.size()) continue; // (the list shrank since the candidates were found)
             const auto& sp = edit_splines[c.idx];
             if (sp.id != c.id) continue;
-            if (std::fabs(sp.position.x - ex) > 80.f || std::fabs(sp.position.y - ey) > 80.f) continue;
+            if (std::fabs(sp.position.x - ex) > 80.f + sp.length || std::fabs(sp.position.y - ey) > 80.f + sp.length) continue; // (a long spline reaches far from its start: cars sank into the far part of every one over ~80 m)
             float along = 0.f, lat = 0.f;
             if (!spline::world_xy_to_spline_local(sp, ex, ey, along, lat)) continue;
             float z_off = -1.e9f;
@@ -1778,6 +1778,12 @@
         std::int32_t light_obj = -1;
         int light_idx = -1;
         float speed_limit = 0.f; // km/h from [pathrule] speedlimit, 0 = none
+        // (for the AI traffic's lanes, as openOMSI's own map loader sets them: the junction rules need the turn -
+        //  a left turn waits for the oncoming traffic - and the lanes of one spline their offsets to be neighbours)
+        int turn = 0;          // object path blinker: 0 none, 1 left, 2 right
+        float width = 3.f;
+        float offset = 0.f;    // spline path lateral
+        bool crossing_problem = false;
     };
     struct AiLane {
         int path = -1;
@@ -1844,6 +1850,8 @@
                 //  lanes.rs; the traffic drove the wrong way down every mirrored one-way carriageway)
                 if (sp.mirror && ap.dir != 2) ap.dir = ap.dir == 1 ? 0 : 1;
                 ap.speed_limit = rule_speed(sp.path_rules, static_cast<int>(pi));
+                ap.width = pth.width > 0.1f ? pth.width : 3.f;
+                ap.offset = sp.mirror ? -pth.lateral : pth.lateral;
                 const int n = (std::max)(2, static_cast<int>(sp.length) + 1);
                 for (int i = 0; i < n; ++i) {
                     const auto q = spline::evaluate_spline(sp, sp.length * static_cast<float>(i) / (n - 1), pth.lateral, pth.height);
@@ -1883,6 +1891,9 @@
                 ap.path_index = static_cast<int>(pi);
                 ap.dir = path.direction;
                 ap.speed_limit = rule_speed(ob.path_rules, static_cast<int>(pi));
+                ap.turn = path.blinker == 2 ? 1 : (path.blinker == 3 ? 2 : 0); // (openOMSI lanes.rs: 2 left, 3 right)
+                ap.width = path.width > 0.1f ? path.width : 3.f;
+                ap.crossing_problem = path.crossing_problem;
                 if (path.has_use_traffic_light && path.use_traffic_light >= 0) {
                     ap.light_obj = ob.id;
                     ap.light_idx = path.use_traffic_light;
@@ -2956,11 +2967,11 @@
                         const auto lines = cfg::read_cfg_lines(p);
                         for (std::size_t i = 0; i + 1 < lines.size() && next.empty(); ++i) {
                             std::string t = lines[i];
-                            while (!t.empty() && (t.back() == '' || t.back() == ' ' || t.back() == '	')) t.pop_back();
+                            while (!t.empty() && (t.back() == '\r' || t.back() == ' ' || t.back() == '	')) t.pop_back();
                             if (t != "[couple_back]") continue;
                             for (std::size_t j = i + 1; j < lines.size(); ++j) {
                                 std::string f = lines[j];
-                                while (!f.empty() && (f.back() == '' || f.back() == ' ' || f.back() == '	')) f.pop_back();
+                                while (!f.empty() && (f.back() == '\r' || f.back() == ' ' || f.back() == '	')) f.pop_back();
                                 if (f.empty()) continue;
                                 next = p.parent_path() / f;
                                 break;

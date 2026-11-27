@@ -1638,7 +1638,8 @@
             input::cursor_to_framebuffer(window, mx, my, fw, fh);
             camera.ground_z = camera.target_z;
             if (edit_mode == EditMode::GrabHeight) {
-                const float dz = (grab_height_my0 - my) * 0.025f;
+                const float my_v = (coop_walk_active && coop_walk_edit) ? -walk.pitch * 400.f : my;
+                const float dz = (grab_height_my0 - my_v) * 0.025f;
                 if (node_height_mode && grab_spline_id != 0) {
                     auto* sp = find_spline_by_id(grab_spline_id);
                     if (sp) {
@@ -1733,7 +1734,18 @@
                     else s.end_grad = new_g;
                     remesh_spline(s, true);
                     update_spline_panel_live(static_cast<std::size_t>(selected_spline));
-                } else if (const auto hit = camera.hit_ground_xy(mx, my, fw, fh)) {
+                } else if (const auto hit = [&]() {
+                               // walk-edit: the first-person camera's ground plane is at eye height; the
+                               // crosshair's aim point (walk tick) is where the object goes
+                               auto h = camera.hit_ground_xy(mx, my, fw, fh);
+                               if (coop_walk_active && coop_walk_edit) {
+                                   if (!h) h.emplace();
+                                   h->x = walk_aim[0];
+                                   h->y = walk_aim[1];
+                                   h->z = walk_aim[2];
+                               }
+                               return h;
+                           }()) {
                 if ((sco_path_edit.moving || sco_path_edit.following || sco_path_edit.placing) &&
                     (edit_mode == EditMode::Grab || edit_mode == EditMode::SplineFollow) &&
                     sco_path_edit.sel >= 0) {
@@ -1867,10 +1879,24 @@
                     } else if (selected_object >= 0 &&
                         static_cast<std::size_t>(selected_object) < edit_objects.size()) {
                         auto& o = edit_objects[static_cast<std::size_t>(selected_object)];
+                        float gx = hit->x, gy = hit->y;
+                        if (obj_grab_axis == 0 || obj_grab_axis == 1) {
+                            // X / Y lock: the point on the axis line through the G start nearest the cursor
+                            float ax = obj_grab_axis == 0 ? 1.f : 0.f, ay = obj_grab_axis == 1 ? 1.f : 0.f;
+                            if (obj_grab_axis_local) {
+                                // object axes in world (omsi_object_rotation_matrix: RotationZ(-heading))
+                                const float a = grab_start_yaw * (3.14159265f / 180.f);
+                                if (obj_grab_axis == 0) ax = std::cos(a), ay = -std::sin(a);
+                                else ax = std::sin(a), ay = std::cos(a);
+                            }
+                            const float t = (gx - grab_start_x) * ax + (gy - grab_start_y) * ay;
+                            gx = grab_start_x + ax * t;
+                            gy = grab_start_y + ay * t;
+                        }
                         if (spline_attach_spawn_ids.count(o.id))
-                            apply_spline_attach_follow_xy(o, hit->x, hit->y);
+                            apply_spline_attach_follow_xy(o, gx, gy);
                         else
-                            apply_sco_follow_xy(o, hit->x, hit->y);
+                            apply_sco_follow_xy(o, gx, gy);
                     } else if (selected_spline >= 0 &&
                                static_cast<std::size_t>(selected_spline) < edit_splines.size()) {
                         // CRÍTICO: no mantener referencia viva a edit_splines — fill_to_fixed_end /

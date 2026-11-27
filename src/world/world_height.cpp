@@ -55,7 +55,7 @@ float get_height_above_all(float ex, float ey, float z_hint, const TerrainSample
 
     for (const auto& sp : splines) {
         if (sp.sli_path.empty()) continue;
-        if (std::abs(sp.position.x - ex) > 80.f || std::abs(sp.position.y - ey) > 80.f) continue;
+        if (std::abs(sp.position.x - ex) > 80.f + sp.length || std::abs(sp.position.y - ey) > 80.f + sp.length) continue; // (long splines: from the start, not only its first 80 m)
         const auto def = spline::load_sli_shared(sp.sli_path);
         if (!def || def->only_editor || def->height_profiles.empty()) continue;
         float along = 0.f, lat = 0.f;

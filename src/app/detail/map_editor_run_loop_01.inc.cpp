@@ -478,8 +478,11 @@
                 ul_lmb = lmb_now;
             }
         }
+        // Walking without edit (F7 second press): the editor takes no mouse at all - no hover, no click, no
+        // pick at the hidden cursor's last place (that was the stale hover left after leaving walk-edit).
         const bool over_ui = panel.pointer_over_panel() || imgui_overlay.wants_capture_mouse() ||
-                             (ultralight_ui && ultralight_overlay.pointer_over_panel(ul_vx, ul_vy));
+                             (ultralight_ui && ultralight_overlay.pointer_over_panel(ul_vx, ul_vy)) ||
+                             (coop_walk_active && !coop_walk_edit);
 #include "modules/mod_spray.inc.cpp"
 #include "modules/mod_beamng_frame.inc.cpp"
         // Only block editor hotkeys when a text field is actively being typed into.
@@ -511,6 +514,9 @@
             return true;
         }();
         editor_shortcuts.input_live = editor_keys_live;
+        // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y also while walking (walk-only mode has the other editor keys off)
+        const bool walk_undo_live = coop_walk_active && !bus_drive_active && !typing_ui &&
+                                    GetForegroundWindow() == glfw_hwnd;
         auto hotkey_down = [&](int /*glfw_key*/, int vk) -> bool {
             if (!editor_keys_live) return false;
             // (walking: W A S D, E, space and shift are the walker's)

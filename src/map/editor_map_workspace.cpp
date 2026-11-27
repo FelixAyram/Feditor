@@ -1060,11 +1060,13 @@ bool write_tile_map_file(const std::filesystem::path& tile_map_path, const MapTi
     auto emit_spline_attach = [&](const MapSplineAttachmentInst& sa) {
         out.push_back(sa.is_repeater ? "[splineAttachement_repeater]" : "[splineAttachement]");
         if (sa.is_repeater) {
+            // 0 / head / head / sco / id / spline index (map_attachment.cpp parse_spline_attachment_at_tag_line)
             out.push_back("0");
-            out.push_back("0");
-            out.push_back(std::to_string(sa.spline_index));
+            out.push_back(std::to_string(sa.repeater_head[0]));
+            out.push_back(std::to_string(sa.repeater_head[1]));
             out.push_back(rel_omsi(sa.sco_path, omsi_root));
             out.push_back(std::to_string(sa.instance_id));
+            out.push_back(std::to_string(sa.spline_index));
         } else {
             out.push_back("0");
             out.push_back(rel_omsi(sa.sco_path, omsi_root));

@@ -76,17 +76,15 @@
             }
             if (sel_filter_open && (!sel_snap_obj_ids.empty() || !sel_snap_spl_ids.empty() ||
                                     !sel_id_rows.empty() || !sel_path_rows.empty())) {
-                {
-                    const ImGuiViewport* vp = ImGui::GetMainViewport();
-                    const ImVec2 pos(vp->WorkPos.x + vp->WorkSize.x - 380.f, vp->WorkPos.y + 280.f);
-                    ImGui::SetNextWindowPos(pos, ImGuiCond_Appearing);
-                }
+                ui::float_slot_begin("seleccion", 30); // docked slot, slides with the other small windows
                 ImGui::SetNextWindowSizeConstraints(ImVec2(360.f, 0.f), ImVec2(360.f, 4000.f));
                 ImGui::SetNextWindowBgAlpha(0.92f);
                 ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 10.f);
                 ImGuiWindowFlags wflags = ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize;
                 bool win_open = sel_filter_open;
-                if (ImGui::Begin("Selección", &win_open, wflags)) {
+                const bool sel_win_drawn = ImGui::Begin("Selección", &win_open, wflags);
+                ui::float_slot_end();
+                if (sel_win_drawn) {
                     char sel_hdr[96]{};
                     std::snprintf(sel_hdr, sizeof(sel_hdr), "%d obj · %d spl##sel_hdr",
                                   static_cast<int>(group_sel_obj_ids.size()), static_cast<int>(group_sel_spl_ids.size()));

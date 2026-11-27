@@ -6952,7 +6952,10 @@
         ImGui::SetNextWindowSize(ImVec2(360.f, 420.f), ImGuiCond_FirstUseEver);
         bool open = true;
         const std::string title = "Texturas: " + mesh_edit.tex_pick_src + "###tex_pick_win";
-        if (ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoCollapse)) {
+        ui::float_slot_begin("tex_pick", 50); // docked with the other small windows
+        const bool tex_pick_drawn = ImGui::Begin(title.c_str(), &open, ImGuiWindowFlags_NoCollapse);
+        ui::float_slot_end();
+        if (tex_pick_drawn) {
             int n_on = 0;
             for (char c : mesh_edit.tex_pick_on) n_on += c ? 1 : 0;
             if (mesh_edit.tex_pick_list.empty()) ImGui::TextDisabled(omsi::ui::i18n::tr_lit("Sin texturas resolubles"));
@@ -8120,12 +8123,14 @@
                     ly = mid(ys);
                     lz = mid(zs);
                 }
-                ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x - 268.f, vp->WorkPos.y + 48.f),
-                                        ImGuiCond_Always);
+                (void)vp;
+                ui::float_slot_begin("mesh_item", 15); // docked with the other small windows
                 ImGui::SetNextWindowSize(ImVec2(256.f, 210.f), ImGuiCond_Always);
-                if (ImGui::Begin("Item", nullptr,
-                                 ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoNav |
-                                     ImGuiWindowFlags_NoSavedSettings)) {
+                const bool item_drawn = ImGui::Begin("Item", nullptr,
+                                                     ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoNav |
+                                                         ImGuiWindowFlags_NoSavedSettings);
+                ui::float_slot_end();
+                if (item_drawn) {
                     ImGui::TextUnformatted(omsi::ui::i18n::tr_lit("Transform  (median sel)"));
                     float loc[3] = {lx, ly, lz};
                     static bool loc_cap = false;

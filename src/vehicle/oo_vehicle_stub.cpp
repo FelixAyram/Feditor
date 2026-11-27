@@ -44,6 +44,15 @@ size_t oo_traffic_lamps(OoTraffic*, double, double, double, float*, size_t) { re
 size_t oo_bus_lamps(OoBus*, float*, size_t) { return 0; }
 size_t oo_traffic_bodies(OoTraffic*, float*, size_t) { return 0; }
 int32_t oo_traffic_light_set(OoTraffic*, int64_t, int32_t, int32_t) { return 0; }
+uint64_t oo_traffic_service_bus(OoTraffic*, const char*, const int64_t*, size_t, const double*, size_t, const char*,
+                                const char*) { return 0; }
+size_t oo_traffic_car_debug(OoTraffic*, uint64_t, char*, size_t) { return 0; }
+int32_t oo_traffic_car_state(OoTraffic*, uint64_t, OoCarState*) { return 0; }
+int32_t oo_traffic_car_body(OoTraffic*, int32_t, float*) { return 0; }
+void oo_traffic_set_view(OoTraffic*, double, double, double, float, float) {}
+size_t oo_traffic_car_explain(OoTraffic*, uint64_t, char*, size_t) { return 0; }
+uint64_t oo_traffic_service_bus_stations(OoTraffic*, const char*, double, double, const double*, size_t, const char*,
+                                         const char*) { return 0; }
 size_t oo_mesh_file(OoBus*, int32_t, char*, size_t) { return 0; }
 size_t oo_bus_paint(OoBus*, int32_t, char*, size_t) { return 0; }
 size_t oo_bus_skinned(OoBus*, int32_t, float*, size_t) { return 0; }

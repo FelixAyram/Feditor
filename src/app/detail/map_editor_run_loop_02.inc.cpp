@@ -1052,11 +1052,13 @@
                 }
                 float mx = 0.f, my = 0.f, fw = 1.f, fh = 1.f;
                 input::cursor_to_framebuffer(window, mx, my, fw, fh);
-                grab_height_my0 = my;
+                // walk-edit: the cursor is pinned to the crosshair, so looking up / down drives the height
+                grab_height_my0 = (coop_walk_active && coop_walk_edit) ? -walk.pitch * 400.f : my;
+                obj_grab_axis = -1;
                 log::info("editor grab HEIGHT only (Z) — restored G pose, LMB=place Esc/GG=cancel");
             }
             // Ctrl+Alt+Z / Ctrl+Shift+Alt+Z camera undo/redo; Ctrl+Z / Ctrl+Shift+Z editor undo/redo
-            const bool z_async = editor_keys_live && (GetAsyncKeyState('Z') & 0x8000) != 0;
+            const bool z_async = (editor_keys_live || walk_undo_live) && (GetAsyncKeyState('Z') & 0x8000) != 0;
             static bool z_undo_was = false;
             const bool alt = (GetAsyncKeyState(VK_MENU) & 0x8000) != 0;
             if (z_async && !z_undo_was && ctrl && alt) {
@@ -1240,7 +1242,7 @@ fill_temp_ids.clear();
             }
             z_undo_was = z_async && ctrl;
             z_was = z_now;
-            const bool y_async = editor_keys_live && (GetAsyncKeyState('Y') & 0x8000) != 0;
+            const bool y_async = (editor_keys_live || walk_undo_live) && (GetAsyncKeyState('Y') & 0x8000) != 0;
             static bool y_redo_was = false;
             if (y_async && !y_redo_was && ctrl && !alt) {
                 if (edit_mode == EditMode::Mesh) {
@@ -1666,6 +1668,42 @@ fill_temp_ids.clear();
             const bool k_now = hotkey_down(GLFW_KEY_K, 'K');
             const bool shift = (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0;
             const bool ctrl = (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0;
+            {
+                // G on one object: X / Y lock the move to the object's own axis (or the world's, F6)
+                static bool f6_was = false;
+                const bool f6_now = editor_keys_live && (GetAsyncKeyState(VK_F6) & 0x8000) != 0;
+                const bool one_obj_grab = (edit_mode == EditMode::Grab || edit_mode == EditMode::GrabHeight) &&
+                                          !group_grab_active && !shift_s_move.active && !sco_path_edit.active &&
+                                          selected_object >= 0 &&
+                                          static_cast<std::size_t>(selected_object) < edit_objects.size() &&
+                                          !spline_attach_spawn_ids.count(edit_objects[static_cast<std::size_t>(selected_object)].id);
+                if (edit_mode != EditMode::Grab && edit_mode != EditMode::GrabHeight) obj_grab_axis = -1;
+                auto axis_status = [&]() {
+                    const char* sp = obj_grab_axis_local ? "local" : "global";
+                    if (obj_grab_axis == 0) panel.set_status(std::string("G eje X ") + sp + "  (X libre, F6 local/global)");
+                    else if (obj_grab_axis == 1) panel.set_status(std::string("G eje Y ") + sp + "  (Y libre, F6 local/global)");
+                    else panel.set_status(std::string("G libre  (X/Y/Z eje, F6 ejes ") + sp + ")");
+                };
+                if (f6_now && !f6_was) {
+                    obj_grab_axis_local = !obj_grab_axis_local;
+                    if (one_obj_grab) axis_status();
+                    else panel.set_status(obj_grab_axis_local ? "Ejes G: locales del objeto" : "Ejes G: globales");
+                }
+                f6_was = f6_now;
+                const bool xe = x_now && !x_was && !ctrl, ye = yk_now && !yk_was && !ctrl;
+                if (one_obj_grab && (xe || ye)) {
+                    const int want = xe ? 0 : 1;
+                    obj_grab_axis = obj_grab_axis == want ? -1 : want;
+                    if (edit_mode == EditMode::GrabHeight) {
+                        // back from the height mode to the plane move, from the G start pose
+                        auto& o = edit_objects[static_cast<std::size_t>(selected_object)];
+                        o.position.z = grab_start_z;
+                        sync_object_gpu(o);
+                        edit_mode = EditMode::Grab;
+                    }
+                    axis_status();
+                }
+            }
             if (edit_mode == EditMode::Mesh && !ImGui::GetIO().WantTextInput) {
                 const bool uv_hot = mesh_edit.uv_editor_open &&
                                     (mesh_edit.uv_win_focused || mesh_edit.uv_canvas_hov);

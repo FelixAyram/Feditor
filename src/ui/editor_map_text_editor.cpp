@@ -536,11 +536,20 @@ void open_map_text_editor(HWND owner, const std::filesystem::path& path, int got
     if (allowed_write_root && !allowed_write_root->empty())
         g_editor->st.allowed_write_root = *allowed_write_root;
 
-    RECT wr{};
+    // Centred on the editor's monitor, on top of everything (owned tool window): it used to open at the
+    // editor's top-left corner, under / over the small ImGui windows there.
     int x = 80, y = 60, w = 760, h = 560;
-    if (owner && GetWindowRect(owner, &wr)) {
-        x = wr.left + 40;
-        y = wr.top + 40;
+    {
+        MONITORINFO mi{};
+        mi.cbSize = sizeof(mi);
+        const HMONITOR mon = MonitorFromWindow(owner ? owner : GetDesktopWindow(), MONITOR_DEFAULTTONEAREST);
+        if (mon && GetMonitorInfoW(mon, &mi)) {
+            const RECT& wa = mi.rcWork;
+            w = (std::min)(w, static_cast<int>(wa.right - wa.left));
+            h = (std::min)(h, static_cast<int>(wa.bottom - wa.top));
+            x = wa.left + ((wa.right - wa.left) - w) / 2;
+            y = wa.top + ((wa.bottom - wa.top) - h) / 2;
+        }
     }
 
     std::wstring title = L".map - " + path.filename().wstring();
@@ -560,6 +569,23 @@ void open_map_text_editor(HWND owner, const std::filesystem::path& path, int got
         g_editor->st.web.focus_view();
         SetFocus(g_editor->st.web.hwnd());
     }
+}
+
+bool map_text_editor_client_rect(float& l, float& t, float& r, float& b) {
+    if (!g_editor || !IsWindow(g_editor->hwnd) || !IsWindowVisible(g_editor->hwnd) || IsIconic(g_editor->hwnd))
+        return false;
+    RECT wr{};
+    if (!GetWindowRect(g_editor->hwnd, &wr)) return false;
+    POINT a{wr.left, wr.top}, c{wr.right, wr.bottom};
+    if (const HWND owner = GetWindow(g_editor->hwnd, GW_OWNER)) {
+        ScreenToClient(owner, &a);
+        ScreenToClient(owner, &c);
+    }
+    l = static_cast<float>(a.x);
+    t = static_cast<float>(a.y);
+    r = static_cast<float>(c.x);
+    b = static_cast<float>(c.y);
+    return true;
 }
 
 void pump_map_text_editor() {

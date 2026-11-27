@@ -518,7 +518,7 @@ void update_csm_matrices(HelloO3dRenderer::Impl& d, int only_cascade) {
 }
 
 void render_csm_pass(HelloO3dRenderer::Impl& d, ID3D12GraphicsCommandList* cmd, std::uint32_t frame_index,
-                     int only_cascade, bool serial) {
+                     int only_cascade, bool serial, int also_cascade) {
     if (!d.csm_ready || d.sun_shadow_enable < 0.5f || !cmd) return;
     if (!d.csm_pso_opaque || !d.instance_buffer_cpu) return;
     // Until every cascade has a depth slice (start, a new sun direction) all of them are drawn at once; after
@@ -526,8 +526,10 @@ void render_csm_pass(HelloO3dRenderer::Impl& d, ID3D12GraphicsCommandList* cmd, 
     // frame out of every second one with the AI traffic moving in all of them.
     for (const auto& cs : d.csm_cascade)
         if (!cs.shadow_valid || !cs.volume_valid) only_cascade = -1;
+    if (only_cascade < 0 || also_cascade == only_cascade) also_cascade = -1;
 
     update_csm_matrices(d, only_cascade);
+    if (also_cascade >= 0) update_csm_matrices(d, also_cascade);
 
     // Candidate casters with world-space bounding spheres (one cheap pass; reused by all cascades).
     static thread_local std::vector<ShadowCaster> casters;
@@ -635,7 +637,7 @@ void render_csm_pass(HelloO3dRenderer::Impl& d, ID3D12GraphicsCommandList* cmd, 
         auto& cs = d.csm_cascade[ci];
         auto& list = per_cascade[ci];
         list.clear();
-        if (only_cascade >= 0 && ci != only_cascade) continue; // (not this frame's cascade: its slice stays)
+        if (only_cascade >= 0 && ci != only_cascade && ci != also_cascade) continue; // (not this frame's: its slice stays)
         // a caster under ~1.5 texels of this cascade's map casts no shadow anyone can see there
         const float min_r = 0.75f * (2.f * cs.radius / csm_res);
         std::uint64_t scene_hash = 1469598103934665603ull;

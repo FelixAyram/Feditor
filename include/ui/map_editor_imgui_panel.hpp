@@ -122,8 +122,24 @@ void build_map_editor_imgui_ui(const MapEditorImGuiArgs& args);
 // Path editor tab body (Paths / Semaforos / Props / Texturas). Uses panel.path_editor() state.
 void draw_path_editor_tab(EditorSidePanel& panel);
 
+// Floating window layout: the small tool windows (Attachados, Info .sco, Seleccion, ...) dock into slots of a
+// column on the right edge, in `order`, and slide to their new slot (animated) whenever one opens, closes or
+// changes size, so none covers another; the open .map viewer is kept clear. Call float_slot_begin right before
+// ImGui::Begin and float_slot_end right after it (whatever Begin returned). A window not drawn for a frame
+// gives its slot up.
+void float_slot_begin(const char* key, int order);
+void float_slot_end();
+// Once per frame (the panel build calls it): starts / draws the close animation of windows that went away.
+void float_layout_frame();
 // tga path -> ImTextureID (0 = not ready). Thumbnails fall back to per-pixel draw while 0.
 void set_thumb_texture_provider(std::function<std::uint64_t(const std::filesystem::path&)> fn);
+// A texture file's small preview (decoded on a worker the first time it is asked for). id 0 while loading.
+struct TexturePreview {
+    std::uint64_t id = 0;
+    int w = 0, h = 0;
+    bool failed = false;
+};
+[[nodiscard]] TexturePreview texture_preview(const std::filesystem::path& tex);
 // Test captures: draw no editor UI at all while set.
 void set_hide_all_ui(bool hide);
 // Extra "Mesh .o3d" tab next to the tool tabs, only while active() (Bake / Edit mesh tool).

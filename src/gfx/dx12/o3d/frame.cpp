@@ -108,7 +108,7 @@ void HelloO3dRenderer::create_depth_buffer(std::uint32_t width, std::uint32_t he
     d.depth_buffer.Reset();
     if (!d.dsv_heap) {
         D3D12_DESCRIPTOR_HEAP_DESC dsv_heap_desc{};
-        dsv_heap_desc.NumDescriptors = 1;
+        dsv_heap_desc.NumDescriptors = 2; // 0: writable depth, 1: read-only depth (light shafts)
         dsv_heap_desc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
         throw_hr(d.device->CreateDescriptorHeap(&dsv_heap_desc, IID_PPV_ARGS(d.dsv_heap.GetAddressOf())), "DSV heap");
         d.dsv_cpu = d.dsv_heap->GetCPUDescriptorHandleForHeapStart();
@@ -121,7 +121,7 @@ void HelloO3dRenderer::create_depth_buffer(std::uint32_t width, std::uint32_t he
     depth_desc.Height = height;
     depth_desc.DepthOrArraySize = 1;
     depth_desc.MipLevels = 1;
-    depth_desc.Format = DXGI_FORMAT_D32_FLOAT;
+    depth_desc.Format = DXGI_FORMAT_R32_TYPELESS; // typed as D32 for the DSVs, R32 for the scene depth SRV
     depth_desc.SampleDesc.Count = (std::max)(1u, d.msaa_samples);
     depth_desc.SampleDesc.Quality = d.msaa_samples > 1 ? d.msaa_quality : 0;
     depth_desc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
@@ -140,6 +140,32 @@ void HelloO3dRenderer::create_depth_buffer(std::uint32_t width, std::uint32_t he
     dsv_desc.ViewDimension =
         d.msaa_samples > 1 ? D3D12_DSV_DIMENSION_TEXTURE2DMS : D3D12_DSV_DIMENSION_TEXTURE2D;
     d.device->CreateDepthStencilView(d.depth_buffer.Get(), &dsv_desc, d.dsv_cpu);
+
+    // Read-only DSV (slot 1): the light-shaft pass binds it while sampling the depth.
+    const UINT dsv_stride = d.device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
+    d.depth_ro_dsv_cpu = offset_cpu_handle(d.dsv_heap->GetCPUDescriptorHandleForHeapStart(), dsv_stride, 1);
+    D3D12_DEPTH_STENCIL_VIEW_DESC ro_desc = dsv_desc;
+    ro_desc.Flags = D3D12_DSV_FLAG_READ_ONLY_DEPTH;
+    d.device->CreateDepthStencilView(d.depth_buffer.Get(), &ro_desc, d.depth_ro_dsv_cpu);
+
+    // Scene depth SRV at a fixed slot below the CSM slot and the SMAA/scene slots (see csm.cpp, fxaa_post.cpp).
+    if (d.srv_heap) {
+        constexpr std::uint32_t kDepthSrvRelativeSlot = kSrvDescriptorCount - HelloO3dRenderer::kSwapchainBuffers - 6u;
+        D3D12_SHADER_RESOURCE_VIEW_DESC srv{};
+        srv.Format = DXGI_FORMAT_R32_FLOAT;
+        srv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+        if (d.msaa_samples > 1) {
+            srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DMS; // shader reads sample 0
+        } else {
+            srv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            srv.Texture2D.MipLevels = 1;
+        }
+        d.device->CreateShaderResourceView(
+            d.depth_buffer.Get(), &srv,
+            offset_cpu_handle(d.srv_heap->GetCPUDescriptorHandleForHeapStart(), d.srv_stride,
+                              kCbvDescriptorCount + kDepthSrvRelativeSlot));
+        d.depth_srv_gpu = offset_gpu_handle(d.srv_heap_gpu, d.srv_stride, kDepthSrvRelativeSlot);
+    }
 }
 
 void HelloO3dRenderer::set_world_view_proj(const float world_view_proj_transposed[16]) {

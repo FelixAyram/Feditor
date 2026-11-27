@@ -139,7 +139,21 @@ bool create_sw_root(HelloO3dRenderer::Impl& d) {
     range.BaseShaderRegister = 0;
     range.OffsetInDescriptorsFromTableStart = 0;
 
-    D3D12_ROOT_PARAMETER rp[2]{};
+    // CSM table for light shafts: the existing cascade depth SRV (Texture2DArray, t11).
+    D3D12_DESCRIPTOR_RANGE csm_range{};
+    csm_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    csm_range.NumDescriptors = 1;
+    csm_range.BaseShaderRegister = 11;
+    csm_range.OffsetInDescriptorsFromTableStart = 0;
+
+    // Scene depth SRV for light shafts (R32 view of the depth buffer, t12).
+    D3D12_DESCRIPTOR_RANGE depth_range{};
+    depth_range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+    depth_range.NumDescriptors = 1;
+    depth_range.BaseShaderRegister = 12;
+    depth_range.OffsetInDescriptorsFromTableStart = 0;
+
+    D3D12_ROOT_PARAMETER rp[5]{};
     rp[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
     rp[0].Descriptor.ShaderRegister = 0;
     rp[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
@@ -147,8 +161,16 @@ bool create_sw_root(HelloO3dRenderer::Impl& d) {
     rp[1].DescriptorTable.NumDescriptorRanges = 1;
     rp[1].DescriptorTable.pDescriptorRanges = &range;
     rp[1].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    rp[2].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
+    rp[2].Descriptor.ShaderRegister = 3; // ShadowCB (same buffer the scene uses)
+    rp[2].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    rp[3].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    rp[3].DescriptorTable.NumDescriptorRanges = 1;
+    rp[3].DescriptorTable.pDescriptorRanges = &csm_range;
+    rp[3].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
-    D3D12_STATIC_SAMPLER_DESC samp{};
+    D3D12_STATIC_SAMPLER_DESC samps[2]{};
+    D3D12_STATIC_SAMPLER_DESC& samp = samps[0];
     samp.Filter = D3D12_FILTER_MIN_MAG_MIP_LINEAR;
     samp.AddressU = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
     samp.AddressV = D3D12_TEXTURE_ADDRESS_MODE_WRAP;
@@ -156,12 +178,27 @@ bool create_sw_root(HelloO3dRenderer::Impl& d) {
     samp.MaxLOD = D3D12_FLOAT32_MAX;
     samp.ShaderRegister = 0;
     samp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    // s1: CSM comparison (LESS_EQUAL, reverse-free standard depth as the scene uses).
+    D3D12_STATIC_SAMPLER_DESC& cmp = samps[1];
+    cmp.Filter = D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT;
+    cmp.AddressU = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    cmp.AddressV = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    cmp.AddressW = D3D12_TEXTURE_ADDRESS_MODE_CLAMP;
+    cmp.BorderColor = D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE;
+    cmp.ComparisonFunc = D3D12_COMPARISON_FUNC_LESS_EQUAL;
+    cmp.MaxLOD = D3D12_FLOAT32_MAX;
+    cmp.ShaderRegister = 1;
+    cmp.ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
 
     D3D12_ROOT_SIGNATURE_DESC rs{};
-    rs.NumParameters = 2;
+    rp[4].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+    rp[4].DescriptorTable.NumDescriptorRanges = 1;
+    rp[4].DescriptorTable.pDescriptorRanges = &depth_range;
+    rp[4].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+    rs.NumParameters = 5;
     rs.pParameters = rp;
-    rs.NumStaticSamplers = 1;
-    rs.pStaticSamplers = &samp;
+    rs.NumStaticSamplers = 2;
+    rs.pStaticSamplers = samps;
     rs.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
     ComPtr<ID3DBlob> sig_blob, sig_err;
@@ -398,7 +435,7 @@ bool ensure_sky_resources(HelloO3dRenderer::Impl& d) {
     if (!sw.sky_pso || !sw.stars_pso) {
         if (!create_sky_and_star_pipelines(d)) return false;
     }
-    if (!sw.water_pso || !sw.precip_pso) {
+    if (!sw.water_pso || !sw.precip_pso || !sw.shaft_pso) {
         if (!sw_create_water_precip_pipelines(d)) return false;
     }
     if (!sw.cb_ring) {
@@ -482,7 +519,26 @@ D3D12_GPU_VIRTUAL_ADDRESS sw_bind_common(HelloO3dRenderer::Impl& d, std::uint32_
     cb->extra[0] = cloud_tga ? 1.f : 0.f;
     cb->extra[1] = e.precip_intensity;
     cb->extra[2] = static_cast<float>(e.precip_type);
-    cb->extra[3] = 0.f;
+    cb->extra[3] = e.god_ray_strength;
+    // Inverse view-projection in the same transposed storage convention as view_proj.
+    const DirectX::XMMATRIX vp = DirectX::XMMatrixTranspose(DirectX::XMLoadFloat4x4(&d.view_proj_transposed_));
+    DirectX::XMStoreFloat4x4(&cb->inv_vp, DirectX::XMMatrixTranspose(DirectX::XMMatrixInverse(nullptr, vp)));
+    // Light shafts: Normal = 8 steps / 260 m; Plus = 32 steps / 380 m with stronger in-scatter.
+    cb->shaft[0] = e.shaft_plus ? 32.f : 8.f;
+    cb->shaft[1] = e.shaft_plus ? 1.8f : 1.0f;
+    cb->shaft[2] = e.shaft_plus ? 380.f : 260.f;
+    cb->shaft[3] = e.shaft_plus ? 0.78f : 0.6f;          // Henyey-Greenstein g: strong forward glow in Plus
+    cb->shaft2[0] = e.shaft_plus ? 0.06f : 0.f;          // visible from the side (phase floor)
+    cb->shaft2[1] = e.shaft_plus ? 0.45f : 0.f;          // drifting dust: density modulation depth
+    cb->shaft2[2] = e.shaft_plus ? 0.6f : 0.f;           // drift speed
+    // OMSI_SHAFT_DEBUG=1: visibility. OMSI_SHAFT_PROBE=1 (with OMSI_SHAFT_DEBUG=1): depth probe.
+    static const bool s_shaft_probe = [] {
+        const char* p = std::getenv("OMSI_SHAFT_PROBE");
+        return p && p[0] == '1';
+    }();
+    cb->shaft2[3] = e.shaft_debug ? (s_shaft_probe ? 2.f : 1.f) : 0.f;
+    cb->shaft3[0] = e.ground_z;
+    cb->shaft3[1] = cb->shaft3[2] = cb->shaft3[3] = 0.f;
     return sw.cb_ring->GetGPUVirtualAddress() + off;
 }
 

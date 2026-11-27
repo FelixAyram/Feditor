@@ -35,7 +35,13 @@
     };
     std::unordered_map<std::uint64_t, AiTrafficCar> ai_traffic_cars;
     std::unordered_set<std::int64_t> ai_traffic_owners_sent; // (owner << 1 | object) whose lanes went over
-    std::unordered_set<std::int32_t> ai_traffic_light_objs;   // crossings whose light program the traffic has
+    std::unordered_set<std::int32_t> ai_traffic_light_objs;
+    struct AiServiceBus {
+        std::uint64_t id = 0;
+        std::size_t trip = 0; // index into ai_departures
+        double born = 0.0;
+    };
+    std::vector<AiServiceBus> ai_service_buses;   // crossings whose light program the traffic has
     // lanes go over around a ring of points (the view, the bus and 8 points 380 m out) one a quarter second,
     // each 250 m cell again whenever the map streamed in more roads: the cars always find the road on ahead
     // (fed only around the view every 120 m, a car came to the end of what it knew and was taken off)
@@ -133,6 +139,7 @@
         ai_traffic_owners_sent.clear();
         ai_traffic_fed_cells.clear();
         ai_traffic_light_objs.clear();
+        ai_service_buses.clear();
     };
     // a part's model (front or coupled section of a car type) on the GPU once, hidden: the cars clone it
     auto ai_traffic_proto = [&](const std::string& part_file) -> AiTrafficProto& {
@@ -228,7 +235,12 @@
             if (ap.pts.size() < 2) continue;
             OoLaneDesc d{};
             d.kind = 0;
-            d.width = 3.f;
+            d.width = ap.width;
+            d.turn = ap.turn;
+            d.offset = ap.offset;
+            // ([crossingproblem] not passed on: it makes the meeting place both whole lanes - a car waited until
+            //  the other had driven its whole path, as Omsi.exe stalls with it; the geometric meeting place decides)
+            d.crossing_problem = 0;
             d.speed_limit_kmh = ap.speed_limit;
             d.density = 1.f;
             d.priority = -1.f;
@@ -297,6 +309,621 @@
                       " in all");
         }
         ai_traffic_owners_sent.insert(owners_now.begin(), owners_now.end());
+    };
+    // Timetable buses: the map's trips (TTData) served by its AI buses, as Omsi.exe runs the timetable. A trip
+    // whose track starts near the view gets a bus now and then (OMSI_AI_SERVICE=<n>, default 4 at once); it drives
+    // the track's lanes and serves its stations at their times (openOMSI BusService).
+    double ai_service_t = -100.0;
+    // The timetable as it runs (Omsi.exe / openOMSI timetable_run): every tour's trips at their departure times. A
+    // departure under way now is somewhere on its track - where, follows from the trip's station times and the
+    // clock (no simulation off screen: the position is worked out). Where that point lies in the loaded network
+    // near the view, its bus is put there and drives on, serving the stations left at their times; it goes once
+    // its trip is done or the view is far from it, and comes back where it should be when the view returns.
+    // Moving the clock puts every bus where the new time has it.
+    struct AiDeparture {
+        std::size_t trip = 0;
+        int profile = 0;
+        double dep_min = 0.0, dur_min = 0.0;
+        std::vector<float> times;      // minutes from departure, per station
+        std::vector<int> station_entry; // track entry index per station (-1 unknown)
+    };
+    std::vector<AiDeparture> ai_departures;
+    // Herramientas > Buses IA: every departure under way on the whole map (worked out from the clock, seen or not)
+    struct AiBusRow {
+        std::size_t di = 0;
+        std::string line, trip, terminus;
+        int rel_min = 0, dur_min = 0;
+        bool has_pos = false; // where it is (its stations loaded), else where its next station's tile is
+        float x = 0.f, y = 0.f;
+    };
+    std::vector<AiBusRow> ai_bus_rows;
+    std::uint64_t ai_drive_request = 0;
+    std::uint64_t ai_follow_id = 0, ai_follow_pick = 0;
+    std::size_t ai_pending_follow = static_cast<std::size_t>(-1), ai_pending_drive = static_cast<std::size_t>(-1);
+    bool ai_pending_exact = false; // the camera is on the pending bus's exact place (its stations loaded)
+    bool ai_departures_built = false;
+    double ai_service_clock = -1.0;
+    std::unordered_set<std::size_t> ai_departures_done; // served already (not again until the clock is moved)
+    auto ai_service_build = [&]() {
+        ai_departures_built = true;
+        auto& tm = omsi::tt::global_tt_man();
+        if (!tm.loaded) tm.ensure_loaded_now(cfg.global.root);
+        std::unordered_map<std::string, std::size_t> by_name;
+        for (std::size_t i = 0; i < tm.data.trips.size(); ++i) {
+            std::string n = tm.data.trips[i].name;
+            for (auto& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            by_name.emplace(n, i);
+        }
+        for (const auto& ln : tm.data.lines)
+            for (const auto& tour : ln.tours)
+                for (const auto& tt : tour.trips) {
+                    std::string n = tt.trip_name;
+                    for (auto& c : n) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                    const auto it = by_name.find(n);
+                    if (it == by_name.end()) continue;
+                    AiDeparture d;
+                    d.trip = it->second;
+                    d.profile = tt.profile_index;
+                    d.dep_min = tt.departure_minutes;
+                    d.times = tm.station_times(static_cast<int>(d.trip), d.profile);
+                    if (d.times.empty()) continue;
+                    d.dur_min = d.times.back();
+                    for (const auto& stn : tm.data.trips[d.trip].stations) d.station_entry.push_back(stn.typ2 ? -1 : stn.track_entry_index);
+                    ai_departures.push_back(std::move(d));
+                }
+        log::info("ai traffic: timetable " + std::to_string(ai_departures.size()) + " departures in " +
+                  std::to_string(tm.data.lines.size()) + " lines");
+    };
+    auto ai_service_frame = [&](float ex, float ey, double now) {
+        static const int env_n = [] {
+            const char* e = std::getenv("OMSI_AI_SERVICE");
+            return e && *e ? std::atoi(e) : -1;
+        }();
+        const int cap = env_n >= 0 ? env_n : 16;
+        if (cap <= 0) return;
+        if (now - ai_service_t < 2.0) return;
+        const double dt_wall = ai_service_t < 0.0 ? 0.0 : now - ai_service_t;
+        ai_service_t = now;
+        if (!ai_departures_built) ai_service_build();
+        auto& tm = omsi::tt::global_tt_man();
+        const double clock_min = static_cast<double>(panel.imgui_state().sim_hour) * 60.0;
+        // the clock jumped (set by hand, not run): every bus to where the new time has it
+        const bool jumped = ai_service_clock >= 0.0 && std::fabs(clock_min - ai_service_clock) > 3.0 + dt_wall * 0.5 &&
+                            std::fabs(std::fabs(clock_min - ai_service_clock) - 1440.0) > 3.0;
+        ai_service_clock = clock_min;
+        if (jumped) ai_departures_done.clear();
+        // buses gone (trip done, taken off) or gone_far from the view
+        std::unordered_map<std::uint64_t, std::array<float, 2>> pos_of;
+        {
+            const int nc = oo_traffic_car_count(ai_traffic);
+            for (int i = 0; i < nc; ++i) {
+                std::uint64_t cid = 0;
+                int mc = 0;
+                if (!oo_traffic_car(ai_traffic, i, &cid, &mc) || mc <= 0) continue;
+                float m16[16];
+                if (oo_traffic_car_mesh_world(ai_traffic, i, 0, m16)) pos_of[cid] = {m16[12], m16[13]};
+            }
+        }
+        for (auto it = ai_service_buses.begin(); it != ai_service_buses.end();) {
+            bool gone_far = jumped;
+            if (const auto pp = pos_of.find(it->id); pp != pos_of.end())
+                gone_far = gone_far || std::hypot(pp->second[0] - ex, pp->second[1] - ey) > 650.f;
+            if (gone_far) (void)oo_traffic_remove_car(ai_traffic, it->id);
+            const bool vanished = !pos_of.count(it->id) && now - it->born > 6.0;
+            if (vanished && !jumped) ai_departures_done.insert(it->trip);
+            if (gone_far || vanished) {
+                log::info(std::string("ai traffic: timetable bus ") + std::to_string(it->id) + " off: " +
+                          (jumped ? "clock moved" : gone_far ? "far from the view" : "trip done / taken off"));
+                it = ai_service_buses.erase(it);
+            }
+            else ++it;
+        }
+        // (the list is made at the cap too: it went stale once the map had its buses)
+        const bool at_cap = static_cast<int>(ai_service_buses.size()) >= cap;
+        std::vector<std::array<float, 3>> pts;
+        int placed = 0, c_run = 0, c_track = 0, c_loaded = 0, c_near = 0, c_fail = 0;
+        // the list: every departure under way now
+        ai_bus_rows.clear();
+        for (std::size_t di = 0; di < ai_departures.size() && ai_bus_rows.size() < 400; ++di) {
+            const auto& d = ai_departures[di];
+            double rel = clock_min - d.dep_min;
+            if (rel < 0.0) rel += 1440.0;
+            if (rel < 0.0 || rel >= d.dur_min) continue;
+            const auto& tr = tm.data.trips[d.trip];
+            AiBusRow r;
+            r.di = di;
+            r.line = tr.line;
+            r.trip = tr.name;
+            r.terminus = tr.terminus;
+            r.rel_min = static_cast<int>(rel);
+            r.dur_min = static_cast<int>(d.dur_min);
+            std::size_t k = 0;
+            while (k + 1 < d.times.size() && d.times[k + 1] <= rel) ++k;
+            for (std::size_t q = k; q < tr.stations.size() && q <= k + 1; ++q) {
+                AiTrip::Stop s2;
+                s2.id = tr.stations[q].object_id;
+                std::array<float, 3> sp{};
+                bool exact = false;
+                if (trip_stop_position(s2, sp, exact) && exact) {
+                    r.has_pos = true;
+                    r.x = sp[0];
+                    r.y = sp[1];
+                    break;
+                }
+            }
+            if (!r.has_pos && k + 1 < tr.stations.size()) {
+                // (not loaded: the middle of its next station's tile)
+                const int ti = tr.stations[k + 1].tile_index;
+                if (ti >= 0 && ti < static_cast<int>(cfg.global.tiles.size())) {
+                    const auto& tl = cfg.global.tiles[static_cast<std::size_t>(ti)];
+                    const auto [wx, wy] = world_from_tile_local(150.f, 150.f, tl.grid_x, tl.grid_y);
+                    r.x = wx - tile_ox;
+                    r.y = wy - tile_oy;
+                }
+            }
+            ai_bus_rows.push_back(std::move(r));
+        }
+        // Seguir / Conducir on a bus not on the map yet: the camera went to it; it is placed first, over the cap
+        // and from farther off, and the camera goes to its exact place once its stations are loaded
+        constexpr std::size_t kNone = static_cast<std::size_t>(-1);
+        for (std::size_t* pend : {&ai_pending_follow, &ai_pending_drive}) {
+            if (*pend == kNone) continue;
+            ai_departures_done.erase(*pend);
+            const AiBusRow* row = nullptr;
+            for (const auto& r : ai_bus_rows)
+                if (r.di == *pend) row = &r;
+            if (!row) {
+                *pend = kNone;
+                panel.set_status("Bus IA: ese viaje ya termino");
+                continue;
+            }
+            bool on_map = false;
+            for (const auto& b : ai_service_buses)
+                if (b.trip == *pend) {
+                    on_map = true;
+                    if (pend == &ai_pending_follow) {
+                        ai_follow_pick = b.id;
+                        *pend = kNone;
+                    }
+                }
+            if (!on_map && row->has_pos && !ai_pending_exact) {
+                ai_pending_exact = true;
+                camera.target_x = row->x;
+                camera.target_y = row->y;
+                camera.reset_mouse();
+            }
+        }
+        const bool any_pending = ai_pending_follow != kNone || ai_pending_drive != kNone;
+        if (at_cap && !any_pending) return;
+        std::vector<std::size_t> order;
+        order.reserve(ai_departures.size() + 2);
+        for (const std::size_t pd : {ai_pending_follow, ai_pending_drive})
+            if (pd != kNone && pd < ai_departures.size()) order.push_back(pd);
+        const std::size_t n_first = order.size();
+        for (std::size_t di = 0; di < ai_departures.size(); ++di)
+            if (di != ai_pending_follow && di != ai_pending_drive) order.push_back(di);
+        for (std::size_t oi = 0; oi < order.size(); ++oi) {
+            const std::size_t di = order[oi];
+            const bool pend = oi < n_first;
+            if (!pend && (placed >= 2 || at_cap)) break;
+            const float near_m = pend ? 900.f : 420.f;
+            const auto& d = ai_departures[di];
+            double rel = clock_min - d.dep_min;
+            if (rel < 0.0) rel += 1440.0;
+            if (rel < 0.0 || rel >= d.dur_min) continue; // not under way now
+            ++c_run;
+            bool active = ai_departures_done.count(di) != 0;
+            for (const auto& b : ai_service_buses) active |= b.trip == di;
+            if (active) continue;
+            const auto& tr = tm.data.trips[d.trip];
+            int tk = tr.track_index;
+            if (tk == omsi::tt::Trip::kUnresolved) tk = tm.find_track_by_name(tr.track_name);
+            if (tk < 0 || tk >= static_cast<int>(tm.data.tracks.size())) {
+                // a trip with stations only (OMSI type 2): between the station it left and the next, by time
+                std::size_t k = 0;
+                while (k + 1 < d.times.size() && d.times[k + 1] <= rel) ++k;
+                if (k + 1 >= tr.stations.size()) continue;
+                AiTrip::Stop a2, b2;
+                a2.id = tr.stations[k].object_id;
+                b2.id = tr.stations[k + 1].object_id;
+                std::array<float, 3> pa{}, pb{};
+                bool ea = false, eb = false;
+                const bool ha = trip_stop_position(a2, pa, ea) && ea, hb = trip_stop_position(b2, pb, eb) && eb;
+                if (!ha && !hb) continue;
+                ++c_loaded;
+                const double span = (std::max)(0.01f, d.times[k + 1] - d.times[k]);
+                const double f = std::clamp((rel - d.times[k]) / span, 0.0, 1.0);
+                std::array<float, 3> here = ha && hb ? std::array<float, 3>{static_cast<float>(pa[0] + (pb[0] - pa[0]) * f),
+                                                                           static_cast<float>(pa[1] + (pb[1] - pa[1]) * f), 0.f}
+                                                     : (ha ? pa : pb);
+                const float dist = std::hypot(here[0] - ex, here[1] - ey);
+                if (dist > near_m) continue;
+                ++c_near;
+                std::vector<double> stops;
+                for (std::size_t q = k + 1; q < tr.stations.size(); ++q) {
+                    AiTrip::Stop s2;
+                    s2.id = tr.stations[q].object_id;
+                    std::array<float, 3> sp{};
+                    bool exact = false;
+                    if (!trip_stop_position(s2, sp, exact) || !exact) break; // (the rest is not loaded yet)
+                    const double dep = (d.dep_min + (q < d.times.size() ? d.times[q] : d.dur_min)) * 60.0;
+                    stops.insert(stops.end(), {sp[0], sp[1], static_cast<double>(s2.id), std::fmod(dep, 86400.0)});
+                }
+                if (stops.empty()) continue;
+                const std::uint64_t id = oo_traffic_service_bus_stations(ai_traffic, "", here[0], here[1], stops.data(),
+                                                                         stops.size() / 4, tr.line.c_str(), tr.terminus.c_str());
+                if (!id) {
+                    ++c_fail;
+                    continue;
+                }
+                ai_service_buses.push_back({id, di, now});
+                if (di == ai_pending_follow) {
+                    ai_follow_pick = id;
+                    ai_pending_follow = static_cast<std::size_t>(-1);
+                }
+                ++placed;
+                log::info("ai traffic: timetable bus '" + tr.name + "' (line " + tr.line + ", stations only) " +
+                          std::to_string(static_cast<int>(rel)) + " min under way, " + std::to_string(static_cast<int>(dist)) +
+                          " m from the view, " + std::to_string(stops.size() / 4) + " stops ahead");
+                if (static_cast<int>(ai_service_buses.size()) >= cap) break;
+                continue;
+            }
+            const auto& entries = tm.data.tracks[static_cast<std::size_t>(tk)].entries;
+            if (entries.size() < 2) continue;
+            ++c_track;
+            // where it is now: between the station it left and the next, by the share of that stretch's time
+            std::size_t k = 0;
+            while (k + 1 < d.times.size() && d.times[k + 1] <= rel) ++k;
+            int e0 = k < d.station_entry.size() ? d.station_entry[k] : -1;
+            int e1 = k + 1 < d.station_entry.size() ? d.station_entry[k + 1] : -1;
+            if (e0 < 0) e0 = 0;
+            if (e1 < e0) e1 = static_cast<int>(entries.size()) - 1;
+            const double span = k + 1 < d.times.size() ? (std::max)(0.01f, d.times[k + 1] - d.times[k]) : 1.0;
+            const double f = std::clamp((rel - d.times[k]) / span, 0.0, 1.0);
+            const std::size_t ke = (std::min)(entries.size() - 1, static_cast<std::size_t>(e0 + (e1 - e0) * f));
+            if (!track_entry_points(entries[ke], nullptr, pts) || pts.empty()) continue; // (not loaded: not here)
+            ++c_loaded;
+            const float dist = std::hypot(pts[0][0] - ex, pts[0][1] - ey);
+            if (dist > near_m) continue;
+            ++c_near;
+            std::vector<std::int64_t> ent;
+            for (std::size_t q = ke; q < entries.size(); ++q)
+                ent.insert(ent.end(), {static_cast<std::int64_t>(entries[q].id), static_cast<std::int64_t>(entries[q].path_index)});
+            // the stations still ahead, at their timetable times (seconds of the day)
+            std::vector<double> stops;
+            for (std::size_t q = k + 1; q < tr.stations.size(); ++q) {
+                AiTrip::Stop s2;
+                s2.id = tr.stations[q].object_id;
+                std::array<float, 3> sp{};
+                bool exact = false;
+                if (!trip_stop_position(s2, sp, exact) || !exact) continue;
+                const double dep = (d.dep_min + (q < d.times.size() ? d.times[q] : d.dur_min)) * 60.0;
+                stops.insert(stops.end(), {sp[0], sp[1], static_cast<double>(s2.id), std::fmod(dep, 86400.0)});
+            }
+            const std::uint64_t id = oo_traffic_service_bus(ai_traffic, "", ent.data(), ent.size() / 2, stops.data(),
+                                                            stops.size() / 4, tr.line.c_str(), tr.terminus.c_str());
+            if (!id) {
+                ++c_fail;
+                continue;
+            }
+            ai_service_buses.push_back({id, di, now});
+            if (di == ai_pending_follow) {
+                ai_follow_pick = id;
+                ai_pending_follow = static_cast<std::size_t>(-1);
+            }
+            ++placed;
+            log::info("ai traffic: timetable bus '" + tr.name + "' (line " + tr.line + ") dep " +
+                      std::to_string(static_cast<int>(d.dep_min / 60)) + ":" + std::to_string(static_cast<int>(std::fmod(d.dep_min, 60.0))) +
+                      ", " + std::to_string(static_cast<int>(rel)) + " min under way, at entry " + std::to_string(ke) + "/" +
+                      std::to_string(entries.size()) + ", " + std::to_string(static_cast<int>(dist)) + " m from the view, " +
+                      std::to_string(stops.size() / 4) + " stops ahead");
+            if (static_cast<int>(ai_service_buses.size()) >= cap) break;
+        }
+        static double s_diag_t = 0.0;
+        if (now - s_diag_t > 10.0) {
+            s_diag_t = now;
+            log::info("ai traffic: timetable at " + std::to_string(static_cast<int>(clock_min / 60)) + "h: " +
+                      std::to_string(c_run) + " under way, " + std::to_string(c_track) + " with a track, " +
+                      std::to_string(c_loaded) + " where the map is loaded, " + std::to_string(c_near) + " near the view, " +
+                      std::to_string(c_fail) + " not placed, " + std::to_string(ai_service_buses.size()) + " buses on the road");
+            for (const auto& b : ai_service_buses) {
+                char dbg[512];
+                if (oo_traffic_car_debug(ai_traffic, b.id, dbg, sizeof(dbg)))
+                    log::info("ai traffic: timetable bus " + std::to_string(b.id) + ": " + dbg);
+            }
+        }
+    };
+    // The camera on an AI vehicle: Seguir in the Auto IA window (any car) or the Buses IA window (a timetable
+    // bus, picked by hand: sticky), or Vista > Seguir bus IA / OMSI_FOLLOW_SERVICE (a random timetable bus,
+    // another when it is gone). Escape stops following. Views as for the player's bus: behind it (free orbit),
+    // F1 driver's seat (again: the next one), F2 outside turning with it, F3 passenger (again: the next), F4 behind.
+    bool ai_follow_sticky = false, ai_follow_env_off = false, ai_follow_locked = false, ai_follow_snap = true;
+    int ai_follow_cam = 0, ai_follow_drv_idx = -1, ai_follow_pax_idx = 0; // cam: 0 behind, 1 driver, 2 outside, 3 pax
+    float ai_fc_dth = 0.f, ai_fc_dph = 0.f, ai_fc_last_th = 0.f, ai_fc_last_ph = 0.f;
+    std::unordered_map<std::string, std::shared_ptr<const omsi::bus::BusDocument>> ai_bus_docs; // part file -> .bus
+    auto ai_bus_doc = [&](const std::string& file) -> const omsi::bus::BusDocument* {
+        auto [it, fresh] = ai_bus_docs.try_emplace(file);
+        if (fresh) {
+            try {
+                if (auto d = omsi::bus::load_bus(std::filesystem::u8path(file)))
+                    it->second = std::make_shared<const omsi::bus::BusDocument>(std::move(*d));
+            } catch (...) {
+            }
+        }
+        return it->second.get();
+    };
+    auto ai_follow_release_cam = [&]() {
+        if (!ai_follow_locked) return;
+        ai_follow_locked = false;
+        camera.editor_nav = true;
+        camera.orbit_target_locked = false;
+        camera.radius = (std::max)(camera.radius, 25.f);
+        camera.reset_mouse();
+    };
+    auto ai_follow_start = [&](std::uint64_t id) {
+        ai_follow_id = id;
+        ai_follow_sticky = true;
+        ai_follow_snap = true;
+        log::info("ai traffic: camera follows " + std::to_string(id));
+    };
+    auto ai_follow_stop = [&]() {
+        ai_follow_id = 0;
+        ai_follow_sticky = false;
+        ai_follow_env_off = true;
+        ai_pending_follow = static_cast<std::size_t>(-1);
+        panel.imgui_state().follow_ai_bus = false;
+        ai_follow_release_cam();
+        ai_follow_cam = 0;
+    };
+    // the views of the followed vehicle (buttons in the Auto IA / Buses IA windows)
+    auto ai_follow_cam_buttons = [&]() {
+        static const char* kNames[] = {"Detras", "Conductor", "Exterior", "Pasajero"};
+        for (int m = 0; m < 4; ++m) {
+            if (m) ImGui::SameLine();
+            if (ImGui::RadioButton(kNames[m], ai_follow_cam == m)) {
+                if (m == 1 && ai_follow_cam == 1) ++ai_follow_drv_idx;
+                if (m == 3 && ai_follow_cam == 3) ++ai_follow_pax_idx;
+                ai_follow_cam = m;
+                ai_follow_snap = true;
+            }
+        }
+        ImGui::TextDisabled("F1-F4 camaras, Esc deja de seguir");
+    };
+    auto ai_follow_frame = [&]() {
+        static const bool env_follow = std::getenv("OMSI_FOLLOW_SERVICE") != nullptr;
+        auto& stv = panel.imgui_state();
+        if (ai_follow_pick) {
+            ai_follow_start(ai_follow_pick);
+            ai_follow_pick = 0;
+        }
+        const bool following = ai_follow_id != 0 || stv.follow_ai_bus || ai_pending_follow != static_cast<std::size_t>(-1);
+        if (following && !ImGui::GetIO().WantCaptureKeyboard && ImGui::IsKeyPressed(ImGuiKey_Escape, false)) {
+            ai_follow_stop();
+            panel.set_status("Seguir IA: detenido");
+            return;
+        }
+        const bool random_mode = (env_follow && !ai_follow_env_off) || stv.follow_ai_bus;
+        if (!ai_traffic || (!ai_follow_sticky && !random_mode)) {
+            ai_follow_id = 0;
+            ai_follow_sticky = false;
+            ai_follow_release_cam();
+            return;
+        }
+        auto find_i = [&](std::uint64_t want) {
+            const int nc = oo_traffic_car_count(ai_traffic);
+            for (int i = 0; i < nc; ++i) {
+                std::uint64_t cid = 0;
+                int mc = 0;
+                if (oo_traffic_car(ai_traffic, i, &cid, &mc) && cid == want && mc > 0) return i;
+            }
+            return -1;
+        };
+        int fi = ai_follow_id ? find_i(ai_follow_id) : -1;
+        if (fi < 0) {
+            if (ai_follow_sticky) {
+                log::info("ai traffic: followed vehicle " + std::to_string(ai_follow_id) + " gone");
+                ai_follow_id = 0;
+                ai_follow_sticky = false;
+                ai_follow_release_cam();
+                return;
+            }
+            ai_follow_id = 0;
+            if (!ai_service_buses.empty()) {
+                ai_follow_id = ai_service_buses[static_cast<std::size_t>(std::rand()) % ai_service_buses.size()].id;
+                ai_follow_snap = true;
+                log::info("ai traffic: camera follows timetable bus " + std::to_string(ai_follow_id));
+                fi = find_i(ai_follow_id);
+            }
+            if (fi < 0) return;
+        }
+        // F1-F4 as for the player's bus (only while no bus of the player's is out)
+        if (!omsi_bus && !ImGui::GetIO().WantCaptureKeyboard) {
+            const ImGuiKey keys[4] = {ImGuiKey_F4, ImGuiKey_F1, ImGuiKey_F2, ImGuiKey_F3};
+            for (int m = 0; m < 4; ++m)
+                if (ImGui::IsKeyPressed(keys[m], false)) {
+                    if (m == 1 && ai_follow_cam == 1) ++ai_follow_drv_idx;
+                    if (m == 3 && ai_follow_cam == 3) ++ai_follow_pax_idx;
+                    ai_follow_cam = m;
+                    ai_follow_snap = true;
+                }
+        }
+        float body16[16];
+        if (!oo_traffic_car_body(ai_traffic, fi, body16) && !oo_traffic_car_mesh_world(ai_traffic, fi, 0, body16)) return;
+        int mode = (omsi_bus && bus_drive_active) ? 0 : ai_follow_cam;
+        const omsi::bus::BusDocument* doc = nullptr;
+        if (mode != 0) {
+            char part[1024]{};
+            if (oo_traffic_car_part_file(ai_traffic, fi, 0, part, sizeof(part))) doc = ai_bus_doc(part);
+            if (mode == 1 && (!doc || doc->driver_cameras.empty())) mode = 2;
+            if (mode == 3 && (!doc || doc->passenger_cameras.empty())) mode = (doc && !doc->driver_cameras.empty()) ? 1 : 2;
+        }
+        if (mode == 0) {
+            ai_follow_release_cam();
+            camera.target_x = body16[12];
+            camera.target_y = body16[13];
+            camera.target_z = body16[14] + 2.f;
+            camera.ground_z = camera.target_z;
+            return;
+        }
+        XMFLOAT4X4 bm{};
+        std::memcpy(&bm, body16, sizeof(bm));
+        const XMMATRIX body = XMLoadFloat4x4(&bm);
+        const auto to_world = [&](float lx, float ly, float lz) {
+            XMFLOAT3 w{};
+            XMStoreFloat3(&w, XMVector3TransformCoord(XMVectorSet(lx, ly, lz, 1.f), body));
+            return w;
+        };
+        const auto dir_world = [&](float lx, float ly, float lz) {
+            XMFLOAT3 w{};
+            XMStoreFloat3(&w, XMVector3Normalize(XMVector3TransformNormal(XMVectorSet(lx, ly, lz, 0.f), body)));
+            return w;
+        };
+        if (!ai_follow_locked) ai_follow_snap = true;
+        ai_follow_locked = true;
+        camera.ground_z = body16[14];
+        camera.z_up = true;
+        camera.editor_nav = false;
+        camera.orbit_target_locked = true;
+        // (mouse look since the last frame stays an offset from the view's own direction)
+        if (ai_follow_snap) {
+            ai_fc_dth = 0.f;
+            ai_fc_dph = 0.f;
+        } else {
+            ai_fc_dth += camera.theta - ai_fc_last_th;
+            ai_fc_dph += camera.phi - ai_fc_last_ph;
+        }
+        const auto set_angles = [&](float base_th, float base_ph) {
+            camera.theta = base_th + ai_fc_dth;
+            camera.phi = std::clamp(base_ph + ai_fc_dph, 0.1f, 3.14159265f - 0.1f);
+            ai_fc_dph = camera.phi - base_ph;
+            ai_fc_last_th = camera.theta;
+            ai_fc_last_ph = camera.phi;
+        };
+        if (mode == 1 || mode == 3) {
+            const auto& list = mode == 1 ? doc->driver_cameras : doc->passenger_cameras;
+            int& idx = mode == 1 ? ai_follow_drv_idx : ai_follow_pax_idx;
+            if (idx < 0) idx = mode == 1 ? (std::max)(0, doc->std_driver_camera_index) : 0;
+            if (idx >= static_cast<int>(list.size())) idx = 0;
+            const auto& c = list[static_cast<std::size_t>(idx)];
+            const float yaw = c.yaw_deg * 3.14159265f / 180.f, pitch = c.pitch_deg * 3.14159265f / 180.f;
+            const auto f = dir_world(std::sin(yaw) * std::cos(pitch), std::cos(yaw) * std::cos(pitch), std::sin(pitch));
+            const auto eye = to_world(c.pos_x, c.pos_y, c.pos_z);
+            constexpr float kR = 0.05f;
+            camera.radius = kR;
+            camera.target_x = eye.x + f.x * kR;
+            camera.target_y = eye.y + f.y * kR;
+            camera.target_z = eye.z + f.z * kR;
+            set_angles(std::atan2(-f.y, -f.x), std::acos(std::clamp(-f.z, -1.f, 1.f)));
+            ai_follow_snap = false;
+            return;
+        }
+        const auto ctr = doc ? to_world(0.f, doc->bbox_offset_y, doc->bbox_half_z) : to_world(0.f, 0.f, 1.5f);
+        camera.target_x = ctr.x;
+        camera.target_y = ctr.y;
+        camera.target_z = ctr.z;
+        const auto fwd = dir_world(0.f, 1.f, 0.f);
+        if (ai_follow_snap) {
+            camera.radius = doc ? (std::max)(doc->bbox_half_y * 2.f + 6.f, 10.f) : 12.f;
+            ai_fc_last_ph = camera.phi = 1.2f;
+            ai_fc_dph = 0.f;
+        }
+        set_angles(std::atan2(-fwd.y, -fwd.x), 1.2f); // turns with it
+        ai_follow_snap = false;
+    };
+    // Herramientas > Buses IA (horario): the timetable buses under way on the whole map, Seguir / Conducir per bus
+    auto ai_bus_list_window = [&]() {
+        auto& stv = panel.imgui_state();
+        if (!stv.show_ai_bus_list) return;
+        ImGui::SetNextWindowSize(ImVec2(520.f, 420.f), ImGuiCond_FirstUseEver);
+        if (!ImGui::Begin("Buses IA (horario)##ai_bus_list", &stv.show_ai_bus_list)) {
+            ImGui::End();
+            return;
+        }
+        if (!ai_traffic) ImGui::TextUnformatted("Activa Trafico IA (Vista) para ver los buses.");
+        ImGui::Text("%d en servicio ahora, %d en el mapa", static_cast<int>(ai_bus_rows.size()),
+                    static_cast<int>(ai_service_buses.size()));
+        if (ai_follow_id) ai_follow_cam_buttons();
+        else if (ai_pending_follow != static_cast<std::size_t>(-1))
+            ImGui::TextDisabled("Esperando que aparezca el bus... (Esc cancela)");
+        if (ImGui::BeginTable("##aibl", 5, ImGuiTableFlags_RowBg | ImGuiTableFlags_ScrollY | ImGuiTableFlags_Borders)) {
+            ImGui::TableSetupColumn("Linea");
+            ImGui::TableSetupColumn("Destino");
+            ImGui::TableSetupColumn("min");
+            ImGui::TableSetupColumn("Estado");
+            ImGui::TableSetupColumn("");
+            ImGui::TableHeadersRow();
+            for (std::size_t i = 0; i < ai_bus_rows.size(); ++i) {
+                const auto& r = ai_bus_rows[i];
+                std::uint64_t id = 0;
+                for (const auto& b : ai_service_buses)
+                    if (b.trip == r.di) id = b.id;
+                ImGui::TableNextRow();
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(r.line.c_str());
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(r.terminus.empty() ? r.trip.c_str() : r.terminus.c_str());
+                ImGui::TableNextColumn();
+                ImGui::Text("%d/%d", r.rel_min, r.dur_min);
+                ImGui::TableNextColumn();
+                ImGui::TextUnformatted(id ? "en el mapa" : (r.has_pos ? "cerca" : "lejos"));
+                ImGui::TableNextColumn();
+                ImGui::PushID(static_cast<int>(i));
+                auto go_there = [&]() {
+                    camera.target_x = r.x;
+                    camera.target_y = r.y;
+                    camera.reset_mouse();
+                };
+                if (ImGui::SmallButton("Seguir")) {
+                    if (id) ai_follow_pick = id;
+                    else {
+                        go_there();
+                        ai_pending_follow = r.di;
+                        ai_pending_exact = r.has_pos;
+                    }
+                }
+                ImGui::SameLine();
+                if (ImGui::SmallButton("Conducir")) {
+                    if (id) ai_drive_request = id;
+                    else {
+                        go_there();
+                        ai_pending_drive = r.di;
+                        ai_pending_exact = r.has_pos;
+                    }
+                }
+                ImGui::PopID();
+            }
+            ImGui::EndTable();
+        }
+        ImGui::End();
+    };
+    // Conducir: the AI bus is taken off and the same bus put there as the player's own
+    auto ai_take_over = [&]() {
+        if (!ai_traffic) return;
+        if (ai_pending_drive != static_cast<std::size_t>(-1))
+            for (const auto& b : ai_service_buses)
+                if (b.trip == ai_pending_drive) {
+                    ai_drive_request = b.id;
+                    ai_pending_drive = static_cast<std::size_t>(-1);
+                }
+        if (!ai_drive_request) return;
+        const std::uint64_t want = ai_drive_request;
+        ai_drive_request = 0;
+        const int nc = oo_traffic_car_count(ai_traffic);
+        for (int i = 0; i < nc; ++i) {
+            std::uint64_t cid = 0;
+            int mc = 0;
+            if (!oo_traffic_car(ai_traffic, i, &cid, &mc) || cid != want || mc <= 0) continue;
+            char file[1024];
+            float m16[16];
+            if (!oo_traffic_car_part_file(ai_traffic, i, 0, file, sizeof(file)) || !oo_traffic_car_mesh_world(ai_traffic, i, 0, m16))
+                return;
+            const float heading = std::atan2(m16[4], m16[5]) * 57.2957795f;
+            (void)oo_traffic_remove_car(ai_traffic, want);
+            bus_spawn_at = std::array<float, 3>{m16[12], m16[13], heading};
+            log::info(std::string("ai traffic: driving timetable bus ") + std::to_string(want) + " (" + file + ")");
+            request_spawn_omsi_bus(std::string(file));
+            return;
+        }
     };
     auto ai_traffic_frame = [&](float dt) {
         static const int env_target = [] {
@@ -409,6 +1036,9 @@
         // the player's bus: its front section's box and every coupled section's (the traffic sees the whole
         // articulated bus, not a 12 m box around its front)
         oo_traffic_set_bus(ai_traffic, omsi_bus && omsi_bus->oo ? omsi_bus->oo : nullptr);
+        ai_service_frame(ex, ey, now);
+        ai_follow_frame();
+        ai_take_over();
         // the lights as the editor shows them (the crossing's or its [varparent]'s program, on the editor's
         // clock and time scale): the traffic ran a program of its own, out of step with the lamps on screen
         // (at x5 completely), and drove through what looked red
@@ -418,7 +1048,25 @@
                 if (ph < 0 || !oo_traffic_light_set(ai_traffic, obj, li, ph)) break;
             }
         const float fx = camera.target_x - ex, fy = camera.target_y - ey;
+        {
+            int fbw = 1, fbh = 1;
+            glfwGetFramebufferSize(window, &fbw, &fbh);
+            oo_traffic_set_view(ai_traffic, camera.target_x - ex, camera.target_y - ey, camera.target_z - ez, 45.f,
+                                fbh > 0 ? static_cast<float>(fbw) / static_cast<float>(fbh) : 1.78f);
+        }
         oo_traffic_tick(ai_traffic, dt, ex, ey, ez, fx, fy, nullptr, panel.imgui_state().sim_hour);
+        // the view cone for the pictures below: a car well out of it is posed every 6th frame only
+        float vfx = camera.target_x - ex, vfy = camera.target_y - ey, vfz = camera.target_z - ez;
+        {
+            const float l = std::sqrt(vfx * vfx + vfy * vfy + vfz * vfz);
+            if (l > 1e-5f) {
+                vfx /= l;
+                vfy /= l;
+                vfz /= l;
+            }
+        }
+        static std::uint32_t s_pose_frame = 0;
+        ++s_pose_frame;
         ai_lap(2);
         ai_traffic_pump_protos(3.0);
         ai_lap(3);
@@ -540,6 +1188,16 @@
                 else ++pit;
             }
             auto car_var = [&](const std::string& name) { return oo_traffic_car_var(ai_traffic, i, name.c_str(), 0.f); };
+            // (out of the view - more than ~65 degrees off it and 40 m away: not drawn, posed every 6th frame, each
+            //  car on its own beat; its first mesh tells where it is)
+            if (!car.chunks.empty() && ((s_pose_frame + static_cast<std::uint32_t>(i)) % 6u) != 0u) {
+                float p16[16];
+                if (oo_traffic_car_mesh_world(ai_traffic, i, 0, p16)) {
+                    const float dx = p16[12] - ex, dy = p16[13] - ey, dz = p16[14] - ez;
+                    const float dl = std::sqrt(dx * dx + dy * dy + dz * dz);
+                    if (dl > 40.f && (dx * vfx + dy * vfy + dz * vfz) < 0.42f * dl) continue;
+                }
+            }
             for (int k = 0; k < mc && k < static_cast<int>(car.chunks.size()); ++k) {
                 const std::size_t ch = car.chunks[static_cast<std::size_t>(k)];
                 if (ch == kNoChunk) continue;
@@ -589,4 +1247,131 @@
                       std::to_string(cars_lit) + " cars with a lamp lit");
         }
         ai_lap(6);
+        // Test (OMSI_AI_TEST=1): the camera over the nearest junction with lights, day shots every 30 s with the
+        // stuck cars in the log; then a car selected (shots before / after: nothing else may vanish), then a
+        // timetable bus followed from its driver's seat; closes the editor at the end. Shots in shots/aitest_*.bmp
+        static const bool s_ai_test = std::getenv("OMSI_AI_TEST") != nullptr;
+        if (s_ai_test) {
+            static double s_t0 = -1.0, s_next = 0.0;
+            static int s_step = 0;
+            static float s_jx = 0.f, s_jy = 0.f, s_jz = 0.f;
+            if (s_t0 < 0.0) s_t0 = now;
+            const double t = now - s_t0;
+            ui::set_hide_all_ui(s_step < 6);
+            auto shot = [&](const std::string& name) {
+                renderer.set_pending_screenshot(std::filesystem::path("shots") / ("aitest_" + name + ".bmp"));
+                log::info("ai test: shot " + name);
+            };
+            auto stuck_report = [&](const char* tag) {
+                const int nc = oo_traffic_car_count(ai_traffic);
+                int n_near = 0, standing = 0, stuck = 0;
+                int by_action[10]{};
+                std::string lines;
+                for (int i = 0; i < nc; ++i) {
+                    std::uint64_t cid = 0;
+                    int mc = 0;
+                    float m16[16];
+                    if (!oo_traffic_car(ai_traffic, i, &cid, &mc) || !oo_traffic_car_mesh_world(ai_traffic, i, 0, m16)) continue;
+                    if (std::hypot(m16[12] - s_jx, m16[13] - s_jy) > 150.f) continue;
+                    ++n_near;
+                    OoCarState cs{};
+                    if (!oo_traffic_car_state(ai_traffic, cid, &cs)) continue;
+                    if (cs.action >= 0 && cs.action < 10) ++by_action[cs.action];
+                    if (cs.speed_kmh < 1.f) ++standing;
+                    if (cs.stopped_s > 45.f) {
+                        ++stuck;
+                        if (stuck <= 8)
+                            lines += " [" + std::to_string(cid) + " act=" + std::to_string(cs.action) + " why=" + cs.why + " " +
+                                     std::to_string(static_cast<int>(cs.why_dist)) + "m stood=" +
+                                     std::to_string(static_cast<int>(cs.stopped_s)) + "s waits_on=" + std::to_string(cs.waits_on) + "]";
+                    }
+                }
+                std::string acts;
+                for (int a = 0; a < 10; ++a) acts += " " + std::to_string(by_action[a]);
+                log::info(std::string("ai test: ") + tag + " cars within 150 m=" + std::to_string(n_near) + " standing=" +
+                          std::to_string(standing) + " stood>45s=" + std::to_string(stuck) + " actions[0..9]=" + acts + lines);
+            };
+            if (s_step == 0 && t > 25.0 && !ai_traffic_light_objs.empty()) {
+                // the crossing with lights nearest the view
+                float best = 1e30f;
+                for (const auto obj : ai_traffic_light_objs) {
+                    const auto it = edit_obj_by_id.find(obj);
+                    if (it == edit_obj_by_id.end() || !it->second) continue;
+                    const float d = std::hypot(it->second->position.x - ex, it->second->position.y - ey);
+                    if (d < best) {
+                        best = d;
+                        s_jx = it->second->position.x;
+                        s_jy = it->second->position.y;
+                        s_jz = it->second->position.z;
+                    }
+                }
+                panel.imgui_state().sim_hour = 13.f;
+                camera.target_x = s_jx;
+                camera.target_y = s_jy;
+                camera.target_z = s_jz + 1.f;
+                camera.ground_z = camera.target_z;
+                camera.radius = 70.f;
+                camera.phi = 0.75f;
+                camera.reset_mouse();
+                log::info("ai test: junction at " + std::to_string(s_jx) + "," + std::to_string(s_jy) + " (" +
+                          std::to_string(static_cast<int>(best)) + " m from the view)");
+                s_step = 1;
+                s_next = t + 30.0;
+            } else if (s_step >= 1 && s_step <= 4 && t > s_next) {
+                stuck_report(("junction " + std::to_string(s_step)).c_str());
+                shot("junction_" + std::to_string(s_step));
+                ++s_step;
+                s_next = t + 30.0;
+            } else if (s_step == 5 && t > s_next) {
+                // item 1: a car selected; nothing else may vanish
+                float best = 1e30f;
+                std::uint64_t pick = 0;
+                for (const auto& [cid, car] : ai_traffic_cars) {
+                    for (const auto ch : car.chunks)
+                        if (ch != kNoChunk) {
+                            const auto r = static_cast<std::size_t>(ch);
+                            (void)r;
+                        }
+                    const int nc = oo_traffic_car_count(ai_traffic);
+                    for (int i = 0; i < nc; ++i) {
+                        std::uint64_t id2 = 0;
+                        int mc = 0;
+                        float m16[16];
+                        if (oo_traffic_car(ai_traffic, i, &id2, &mc) && id2 == cid && oo_traffic_car_mesh_world(ai_traffic, i, 0, m16)) {
+                            const float d = std::hypot(m16[12] - s_jx, m16[13] - s_jy);
+                            if (d < best) {
+                                best = d;
+                                pick = cid;
+                            }
+                        }
+                    }
+                }
+                shot("select_before");
+                ai_selected_id = pick;
+                log::info("ai test: selected car " + std::to_string(pick));
+                s_step = 6;
+                s_next = t + 3.0;
+            } else if (s_step == 6 && t > s_next) {
+                shot("select_after");
+                s_step = 7;
+                s_next = t + 2.0;
+            } else if (s_step == 7 && t > s_next) {
+                ai_selected_id = 0;
+                if (!ai_service_buses.empty()) {
+                    ai_follow_start(ai_service_buses.front().id);
+                    ai_follow_cam = 1;
+                    ai_follow_snap = true;
+                }
+                s_step = 8;
+                s_next = t + 6.0;
+            } else if (s_step == 8 && t > s_next) {
+                shot(ai_follow_id ? "bus_driver" : "bus_none");
+                s_step = 9;
+                s_next = t + 2.0;
+            } else if (s_step == 9 && t > s_next) {
+                ai_follow_stop();
+                glfwSetWindowShouldClose(window, GLFW_TRUE);
+                s_step = 10;
+            }
+        }
     };

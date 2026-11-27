@@ -591,6 +591,7 @@ void apply_vista_kv(EditorUiSettings& s, const std::string& key, const std::stri
         } catch (...) {
         }
     } else if (key == "show_sun_shadows") s.show_sun_shadows = parse_cfg_bool(val, s.show_sun_shadows);
+    else if (key == "shaft_plus") s.shaft_plus = parse_cfg_bool(val, s.shaft_plus);
     else if (key == "fog_enabled") s.fog_enabled = parse_cfg_bool(val, s.fog_enabled);
     else if (key == "parked_cars_on") s.parked_cars_on = parse_cfg_bool(val, s.parked_cars_on);
     else if (key == "shadow_distance_m") {
@@ -676,6 +677,7 @@ bool write_editor_ui_cfg(const std::filesystem::path& path, const EditorUiSettin
     out << "timezone_h=" << ui.timezone_h << "\r\n";
     out << "weather_id=" << ui.weather_id << "\r\n";
     out << "show_sun_shadows=" << (ui.show_sun_shadows ? "1" : "0") << "\r\n";
+    out << "shaft_plus=" << (ui.shaft_plus ? "1" : "0") << "\r\n";
     out << "fog_enabled=" << (ui.fog_enabled ? "1" : "0") << "\r\n";
     out << "parked_cars_on=" << (ui.parked_cars_on ? "1" : "0") << "\r\n";
     out << "shadow_distance_m=" << ui.shadow_distance_m << "\r\n";

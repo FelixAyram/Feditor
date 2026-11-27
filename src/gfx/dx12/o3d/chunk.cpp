@@ -1235,6 +1235,10 @@ std::optional<std::size_t> HelloO3dRenderer::clone_chunk(std::size_t src_chunk_i
     clone.highlight = 0.f;
     clone.opacity = 1.f;
     clone.meta.visible = true;
+    // (the helper mark is the instance's, not the mesh's: a carpark box that was the first of its mesh hid every
+    //  ordinary object cloned from it while Show carpark was off)
+    clone.editor_helper = false;
+    clone.want_visible = true;
     // Pick mesh is identical in local space; sharing via empty + AABB fallback (pick.cpp)
     // avoids duplicating megabytes of pick_positions per instance (RAM climb on stream).
     clone.pick_positions.clear();

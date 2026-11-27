@@ -6,6 +6,7 @@
 #include "omsi/options.hpp"
 #include "omsi/utf8_win32.hpp"
 #include "ui/win32_dark.hpp"
+#include "gfx/gfx_backend.hpp"
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -48,6 +49,7 @@ constexpr int IDC_MAP_SEARCH = 1010;
 constexpr int IDC_MAP_CLEAR = 1011;
 constexpr int IDC_ENTRY_SEARCH = 1012;
 constexpr int IDC_ENTRY_CLEAR = 1013;
+constexpr int IDC_GFX = 1014;         // "Gráficos": auto / DirectX 12 / Vulkan / WARP
 
 // Text read from OMSI cfg files is ANSI (system code page) or UTF-8: always keep UTF-8 in memory.
 std::string utf8_text(const std::string& s) { return omsi::is_valid_utf8(s) ? s : omsi::acp_to_utf8(s); }
@@ -151,6 +153,8 @@ struct DialogState {
     std::vector<std::size_t> map_view;   // list row -> items index (search filter)
     std::vector<std::size_t> entry_view; // list row -> entrypoint index
     bool entry_initial_done = false;
+    HWND gfxbox = nullptr;
+    int gfx_choice = 0; // gfx::backend::Kind
 };
 
 std::wstring to_wide(const std::string& s) { return omsi::utf8_to_wide(s); }
@@ -505,6 +509,14 @@ LRESULT CALLBACK DialogWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         mk(0, L"STATIC",
            L"Editar = copia workspace (enlaces).  Solo visualizar = carga rápida, sin mover/crear/borrar.",
            SS_LEFTNOWORDWRAP, 12, 432, 340, 32, 0);
+        // Graphics backend (docs/GFX_BACKENDS.md): saved to gfx_backend.txt; a different one restarts the editor.
+        mk(0, L"STATIC", L"Gráficos:", SS_NOPREFIX, 12, 474, 58, 18, 0);
+        st->gfxbox = mk(0, WC_COMBOBOXW, L"", CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP, 72, 470, 170, 200, IDC_GFX);
+        for (int k = 0; k < 4; ++k)
+            SendMessageW(st->gfxbox, CB_ADDSTRING, 0,
+                         reinterpret_cast<LPARAM>(
+                             to_wide(gfx::backend::label(static_cast<gfx::backend::Kind>(k))).c_str()));
+        SendMessageW(st->gfxbox, CB_SETCURSEL, static_cast<WPARAM>(gfx::backend::requested()), 0);
         mk(0, L"BUTTON", L"Editar mapa", BS_DEFPUSHBUTTON | WS_TABSTOP, 250, 468, 110, 28, IDC_OK);
         mk(0, L"BUTTON", L"Solo visualizar", WS_TABSTOP, 368, 468, 120, 28, IDC_VIEW_ONLY);
         mk(0, L"BUTTON", L"Cancelar", WS_TABSTOP, 496, 468, 80, 28, IDC_CANCEL);
@@ -584,6 +596,10 @@ LRESULT CALLBACK DialogWndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             log::info("launcher entry double-click OK");
             DestroyWindow(hwnd);
             return 0;
+        }
+        if (id == IDC_OK || id == IDC_VIEW_ONLY) {
+            const LRESULT g = SendMessageW(st->gfxbox, CB_GETCURSEL, 0, 0);
+            st->gfx_choice = g == CB_ERR ? 0 : static_cast<int>(g);
         }
         if (id == IDC_OK) {
             st->ok = true;
@@ -818,6 +834,7 @@ std::optional<LaunchSelection> show_launcher(const std::filesystem::path& omsi_r
     sel.entrypoint_index = st.selected_entry;
     sel.confirmed = true;
     sel.view_only = st.view_only;
+    sel.gfx_backend = st.gfx_choice;
 
     if (!picked.data->entrypoints.empty()) {
         const auto& ep = picked.data->entrypoints[sel.entrypoint_index];

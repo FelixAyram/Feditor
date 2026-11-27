@@ -364,6 +364,7 @@
                     sp.alive = true;
                     sp.pinned = true;
                     sp.is_tree = true;
+                    sp.tree_tex = proto_key;
                     sp.half_xy = width * 0.5f;
                     sp.height = height;
                     const XMMATRIX world_m =

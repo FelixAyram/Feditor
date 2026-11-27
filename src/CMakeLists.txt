@@ -71,6 +71,7 @@ add_library(omsi_core
     src/editor/editor_omsi_tools.cpp
     src/editor/editor_tree_billboard.cpp
     src/gfx/gfx_factory.cpp
+    src/gfx/gfx_backend.cpp
     src/gfx/debug_mesh.cpp
     src/gfx/dx12/common/dx12_common.cpp
     src/gfx/dx12/cube/device.cpp

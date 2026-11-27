@@ -6,6 +6,7 @@
 #include "gfx/dx12/hello_o3d_renderer.hpp"
 #include "gfx/dx12/o3d/internal.hpp"
 #include "gfx/dx12/o3d/sky_weather.hpp"
+#include "gfx/dx12/dx12_helpers.hpp"
 #include "omsi/logger.hpp"
 
 #include <algorithm>
@@ -150,6 +151,169 @@ float4 ps_corona(CoPS i) : SV_TARGET {
 }
 )";
 
+// Volumetric light shafts: per pixel, march the view ray up to kShaftDist metres and accumulate sun
+// visibility from the cascaded shadow map (same CSM the scene samples). Henyey-Greenstein forward
+// scattering toward the sun, warm sun colour from the environment. Additive, full screen.
+const char* const kShaftBody = R"(
+cbuffer ShadowCBSw : register(b3) {
+    float4x4 gLightVP[3];
+    float4 gSplits;   // xyz view-space cascade ends
+    float4 gShCam;
+    float4 gShBias;   // x depth bias
+    float4 gCamFwd;
+};
+Texture2DArray gShadowSw : register(t11);
+#if SHAFT_MS
+Texture2DMS<float> gSceneDepth : register(t12); // scene depth (reverse-Z), MSAA: sample 0 only
+#else
+Texture2D<float> gSceneDepth : register(t12);   // scene depth (reverse-Z, 0 = nothing drawn)
+#endif
+SamplerComparisonState gShCmp : register(s1);
+struct ShVS { float4 pos : SV_POSITION; float2 ndc : TEXCOORD0; };
+ShVS vs_shaft(uint vid : SV_VertexID) {
+    ShVS o;
+    float2 p = float2((vid << 1) & 2, vid & 2);
+    o.ndc = p * float2(2.0, -2.0) + float2(-1.0, 1.0);
+    o.pos = float4(o.ndc, 0.0, 1.0);
+    return o;
+}
+// Returns (visibility, coverage). Samples outside the shadow map footprint are NOT counted as lit: the
+// old code treated them as sun, which filled every far / sideways ray with uniform glow and hid the
+// canopy shadows. They are dropped from the integral instead.
+float2 shaftShadow(float3 p, float viewZ) {
+    if (viewZ > gSplits.z || viewZ < 0.0) return float2(0.0, 0.0);
+    int ci = 2;
+    if (viewZ < gSplits.x) ci = 0;
+    else if (viewZ < gSplits.y) ci = 1;
+    float4 lp = mul(float4(p, 1.0), gLightVP[ci]);
+    float3 ndc = lp.xyz / max(lp.w, 1e-5);
+    float2 uv = float2(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
+    if (any(uv < 0.0) || any(uv > 1.0) || ndc.z < 0.0 || ndc.z > 1.0) return float2(0.0, 0.0);
+    float vis = gShadowSw.SampleCmpLevelZero(gShCmp, float3(uv, (float)ci), ndc.z - gShBias.x);
+    return float2(vis, 1.0);
+}
+float shaftHash(float2 c) { return frac(sin(dot(c, float2(127.1, 311.7))) * 43758.5453); }
+float shaftNoise(float2 p) {
+    float2 i = floor(p);
+    float2 f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float a = shaftHash(i);
+    float b = shaftHash(i + float2(1.0, 0.0));
+    float c = shaftHash(i + float2(0.0, 1.0));
+    float d = shaftHash(i + float2(1.0, 1.0));
+    return lerp(lerp(a, b, f.x), lerp(c, d, f.x), f.y);
+}
+// Distance along the view ray to this pixel's nearest opaque surface (metres). Reverse-Z: the cleared value is
+// 0 where nothing was drawn (sky), which means "no limit". Beams stop there, so trees and poles stay dark in
+// front of the light instead of being washed out by the haze behind them.
+float shaftSurfaceDist(float2 ndc, float3 dir) {
+    float2 uv = float2(ndc.x * 0.5 + 0.5, -ndc.y * 0.5 + 0.5);
+#if SHAFT_MS
+    uint dw = 0, dh = 0, dn = 0;
+    gSceneDepth.GetDimensions(dw, dh, dn);
+    int2 px = (int2)clamp(uv * float2(dw, dh), float2(0.0, 0.0), float2(dw, dh) - 1.0);
+    float z = gSceneDepth.Load(px, 0);
+#else
+    uint dw = 0, dh = 0;
+    gSceneDepth.GetDimensions(dw, dh);
+    int2 px = (int2)clamp(uv * float2(dw, dh), float2(0.0, 0.0), float2(dw, dh) - 1.0);
+    float z = gSceneDepth.Load(int3(px, 0));
+#endif
+    if (z <= 0.0) return 1e9;
+    float4 wp = mul(float4(ndc.x, ndc.y, z, 1.0), gInvViewProj);
+    float3 ws = wp.xyz / max(wp.w, 1e-6);
+    return dot(ws - gCam.xyz, dir);
+}
+float4 ps_shaft(ShVS pin) : SV_TARGET {
+    float strength = gExtra.w;
+    if (strength <= 0.001) return float4(0.0, 0.0, 0.0, 0.0);
+    float4 wp = mul(float4(pin.ndc, 0.5, 1.0), gInvViewProj);
+    float3 wpos = wp.xyz / max(wp.w, 1e-6);
+    float3 dir = normalize(wpos - gCam.xyz);
+    // Beams fade toward the horizon instead of ending on a hard line at dir.z = 0.
+    const float horizonFade = smoothstep(0.0, 0.2, abs(dir.z));
+    if (horizonFade <= 0.0) return float4(0.0, 0.0, 0.0, 0.0);
+    const float maxT = gShaftCfg.z;
+    const int steps = (int)gShaftCfg.x;
+    float tmin = 0.0;
+    float tmax = maxT;
+    // Near cascades only (view depth < gSplits.y): the far cascades are too coarse for beams between trunks.
+    const float cosF = dot(dir, gCamFwd.xyz);
+    if (cosF > 1e-3) tmax = min(tmax, gSplits.y / cosF);
+    // Downward rays end at the ground under the camera. Below it the terrain is in the CSM and would read as shadow.
+    if (dir.z < -1e-3) tmax = min(tmax, max(0.0, (gShaftCfg3.x + 0.2 - gCam.z) / dir.z));
+    // Scene depth: stop just in front of this pixel's first opaque surface.
+    tmax = min(tmax, shaftSurfaceDist(pin.ndc, dir) - 0.3);
+    if (tmax <= tmin) return float4(0.0, 0.0, 0.0, 0.0);
+    float L = tmax - tmin;
+    float stepLen = L / (float)steps;
+    float jit = frac(52.9829189 * frac(dot(pin.pos.xy, float2(0.06711056, 0.00583715))));
+    float cs = dot(dir, gSunDir.xyz);
+    float g = gShaftCfg.w;
+    float g2 = g * g;
+    // Phase capped: the forward peak near the sun was blooming instead of reading as beams.
+    float phase = min((1.0 - g2) / (4.0 * 3.14159265 * pow(1.0 + g2 - 2.0 * g * cs, 1.5)), 0.8);
+    phase += gShaftCfg2.x;   // side visibility floor (Plus)
+    float vis[32];           // per-step visibility (dust-modulated), for the contrast pass
+    float cov[32];           // per-step shadow-map coverage
+    float visSum = 0.0;      // sum of visibility over covered samples
+    float covSum = 0.0;      // number of covered samples
+    [loop] for (int i = 0; i < 32; ++i) {
+        if (i >= steps) break;
+        float t = tmin + (float(i) + jit) * stepLen;
+        float3 p = gCam.xyz + dir * t;
+        float dust = 1.0;
+        if (gShaftCfg2.y > 0.0) {
+            // Drifting dust / haze density: the beams seem to move slightly.
+            float2 drift = gCloudWind.xy * gCam.w * gShaftCfg2.z;
+            dust = 1.0 - gShaftCfg2.y * shaftNoise(p.xy * 0.03 + drift);
+        }
+        float2 sv = shaftShadow(p, dot(p - gCam.xyz, gCamFwd.xyz));
+        vis[i] = sv.x * sv.y * dust;
+        cov[i] = sv.y;
+        visSum += vis[i];
+        covSum += sv.y;
+    }
+    if (gShaftCfg2.w > 1.5) {
+        // OMSI_SHAFT_PROBE: one sample at mid-ray. R = cascade (0 / 0.5 / 1), G = light-space depth of the
+        // sample, B = depth stored in the shadow map at its UV. Shadowed where G > B; B = 1 means nothing drawn.
+        float tm = 0.5 * (tmin + tmax);
+        float3 pm = gCam.xyz + dir * tm;
+        float vz = dot(pm - gCam.xyz, gCamFwd.xyz);
+        if (vz < 0.0 || vz > gSplits.z) return float4(0.0, 0.0, 0.25, 1.0);
+        int pc = 2;
+        if (vz < gSplits.x) pc = 0;
+        else if (vz < gSplits.y) pc = 1;
+        float4 plp = mul(float4(pm, 1.0), gLightVP[pc]);
+        float3 pndc = plp.xyz / max(plp.w, 1e-5);
+        float2 puv = float2(pndc.x * 0.5 + 0.5, -pndc.y * 0.5 + 0.5);
+        uint tw = 0, th = 0, te = 0;
+        gShadowSw.GetDimensions(tw, th, te);
+        float stored = gShadowSw.Load(int4((int2)(puv * float2((float)tw, (float)th)), pc, 0)).r;
+        return float4((float)pc * 0.5, saturate(pndc.z), saturate(stored), 1.0);
+    }
+    if (gShaftCfg2.w > 0.5) {
+        // OMSI_SHAFT_DEBUG: R/Y = visibility over covered samples, B = shadow-map coverage along the ray.
+        float vm = visSum / max(covSum, 1.0);
+        return float4(vm, vm * 0.5, covSum / (float)steps, 1.0);
+    }
+    // Contrast: only the lit steps above the ray's average count, so the shadowed gaps between trunks stay dark
+    // and the light reads as bands. The uniform part of the ray is kept small.
+    const float avg = visSum / max(covSum, 1.0);
+    float hp = 0.0;
+    [loop] for (int j = 0; j < 32; ++j) {
+        if (j >= steps) break;
+        hp += cov[j] * max(vis[j] - avg, 0.0);
+    }
+    // Soft clamp 1 - exp(-x): bounded per pixel, so it cannot white out the frame. High sun (noon): almost off.
+    const float density = 0.010 * strength * gShaftCfg.y;
+    const float x = phase * density * stepLen * (0.2 * visSum + hp);
+    const float sunScale = 1.0 - 0.85 * smoothstep(35.0, 65.0, gDayW.w);
+    float3 scat = gSunColor.rgb * gSunDir.w * (1.0 - exp(-x)) * 0.5 * sunScale * horizonFade;
+    return float4(scat, 1.0);
+}
+)";
+
 struct WaterVertex {
     float x, y, z;
     float u, v;
@@ -201,6 +365,27 @@ bool sw_create_water_precip_pipelines(HelloO3dRenderer::Impl& d) {
         rt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
     }
     d.sw.corona_pso = sw_make_pso(d, kCoronaBody, "vs_corona", "ps_corona", cp); // (optional: no glows if it fails)
+
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC sp{};
+    sw_default_pso_desc(d, sp);
+    sp.DepthStencilState.DepthEnable = FALSE; // full screen, no depth interaction
+    sp.InputLayout = {nullptr, 0};
+    auto& srt = sp.BlendState.RenderTarget[0];
+    srt.BlendEnable = TRUE;
+    srt.SrcBlend = D3D12_BLEND_ONE;
+    srt.DestBlend = D3D12_BLEND_ONE;
+    srt.BlendOp = D3D12_BLEND_OP_ADD;
+    srt.SrcBlendAlpha = D3D12_BLEND_ONE;
+    srt.DestBlendAlpha = D3D12_BLEND_ONE;
+    srt.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+    d.sw.shaft_pso = sw_make_pso(d, kShaftBody, "vs_shaft", "ps_shaft", sp); // (optional: no shafts if it fails)
+    D3D12_GRAPHICS_PIPELINE_STATE_DESC sdp = sp; // debug readouts: the same shader, written over the scene
+    sdp.BlendState.RenderTarget[0].BlendEnable = FALSE;
+    d.sw.shaft_debug_pso = sw_make_pso(d, kShaftBody, "vs_shaft", "ps_shaft", sdp);
+    // MSAA variants: the scene depth is Texture2DMS and is read at sample 0.
+    const std::string shaft_ms = std::string("#define SHAFT_MS 1\n") + kShaftBody;
+    d.sw.shaft_pso_ms = sw_make_pso(d, shaft_ms.c_str(), "vs_shaft", "ps_shaft", sp);
+    d.sw.shaft_debug_pso_ms = sw_make_pso(d, shaft_ms.c_str(), "vs_shaft", "ps_shaft", sdp);
     return d.sw.water_pso && d.sw.precip_pso;
 }
 
@@ -314,4 +499,49 @@ void draw_corona_pass(HelloO3dRenderer::Impl& d, ID3D12GraphicsCommandList* cmd,
     if (d.root_signature) cmd->SetGraphicsRootSignature(d.root_signature.Get());
 }
 
+} // namespace omsi::gfx::dx12
+
+namespace omsi::gfx::dx12 {
+// Light shafts. Needs the CSM (sun shadows on): the cascade depth SRV and ShadowCB are bound directly.
+void draw_shaft_pass(HelloO3dRenderer::Impl& d, ID3D12GraphicsCommandList* cmd, std::uint32_t frame, float vp_w,
+                     float vp_h) {
+    auto& sw = d.sw;
+    if (!cmd || !d.has_view_proj_ || !sw.shaft_pso || !sw.env_set) return;
+    if (sw.env.god_ray_strength <= 0.001f || !d.csm_ready || !d.shadow_cb_gpu) return;
+    if (d.sun_shadow_enable < 0.5f || d.csm_srv_gpu.ptr == 0) return;
+    if (!d.depth_buffer || d.depth_srv_gpu.ptr == 0 || d.depth_ro_dsv_cpu.ptr == 0 || d.main_rtv_cpu.ptr == 0) return;
+    const bool ms = d.msaa_samples > 1;
+    const bool dbg = sw.env.shaft_debug;
+    ID3D12PipelineState* pso = nullptr;
+    if (ms) pso = (dbg && sw.shaft_debug_pso_ms) ? sw.shaft_debug_pso_ms.Get() : sw.shaft_pso_ms.Get();
+    else pso = (dbg && sw.shaft_debug_pso) ? sw.shaft_debug_pso.Get() : sw.shaft_pso.Get();
+    if (!pso) return;
+    static bool s_logged = false;
+    if (!s_logged) {
+        s_logged = true;
+        omsi::log::info(std::string("light shafts: active (plus=") + (sw.env.shaft_plus ? "1" : "0") +
+                        ", strength=" + std::to_string(sw.env.god_ray_strength) + ")");
+    }
+    const D3D12_GPU_VIRTUAL_ADDRESS cb = sw_bind_common(d, frame, kSwPassShafts, vp_w, vp_h);
+    // The scene depth is sampled while bound read-only: DEPTH_READ state plus the read-only DSV (no write hazard).
+    const D3D12_RESOURCE_BARRIER to_read = dx12_transition_barrier(
+        d.depth_buffer.Get(), D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_DEPTH_READ);
+    cmd->ResourceBarrier(1, &to_read);
+    cmd->OMSetRenderTargets(1, &d.main_rtv_cpu, FALSE, &d.depth_ro_dsv_cpu);
+    cmd->SetGraphicsRootSignature(sw.root.Get());
+    cmd->SetPipelineState(pso);
+    cmd->SetGraphicsRootConstantBufferView(0, cb);
+    cmd->SetGraphicsRootDescriptorTable(1, sw.tex_table);
+    cmd->SetGraphicsRootConstantBufferView(2, d.shadow_cb_gpu);
+    cmd->SetGraphicsRootDescriptorTable(3, d.csm_srv_gpu);
+    cmd->SetGraphicsRootDescriptorTable(4, d.depth_srv_gpu);
+    cmd->IASetPrimitiveTopology(D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    cmd->DrawInstanced(3, 1, 0, 0);
+    // Writable DSV and DEPTH_WRITE again: later passes and the next frame's depth clear need them.
+    cmd->OMSetRenderTargets(1, &d.main_rtv_cpu, FALSE, &d.dsv_cpu);
+    const D3D12_RESOURCE_BARRIER to_write = dx12_transition_barrier(
+        d.depth_buffer.Get(), D3D12_RESOURCE_STATE_DEPTH_READ, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+    cmd->ResourceBarrier(1, &to_write);
+    if (d.root_signature) cmd->SetGraphicsRootSignature(d.root_signature.Get());
+}
 } // namespace omsi::gfx::dx12

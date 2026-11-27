@@ -81,7 +81,9 @@ formas** (pasa con cualquier programa nuevo que no está firmado con un certific
 ## Requisitos
 
 - **Windows 10 u 11 de 64 bits.**
-- Placa de video con **DirectX 12** (NVIDIA GTX 600 o más nueva, AMD GCN / RX, Intel HD 500 o más nueva).
+- Cualquier placa de video de clase **DirectX 11** o más nueva con driver de Windows 10/11 (NVIDIA GTX 400+,
+  AMD HD 7000 / RX, Intel HD 4400+). Feditor elige solo el backend: **DirectX 12** → **Vulkan**
+  (vkd3d-proton) → **WARP** (por software, sin placa). Ver [Backends gráficos](#backends-gráficos).
 - **OMSI 2** instalado (Steam u otra versión). Feditor no incluye ningún archivo de OMSI 2.
 - Recomendado: 8 GB de RAM, SSD, 4 núcleos o más.
 
@@ -205,7 +207,11 @@ Feditor usa la simulación de vehículos de [openOMSI](https://github.com/openOM
 No de forma oficial (usa DirectX 12). En Linux puede andar con Proton/Wine + VKD3D, sin garantías.
 
 **¿Funciona con OpenGL o DirectX 11?**
-Por ahora solo DirectX 12.
+Las placas DirectX 11 funcionan: el renderer pide DirectX 12 a *feature level* 11_0, que soporta toda
+placa DX11 con driver de Windows 10/11. Si DirectX 12 falla, Feditor se reinicia solo con **Vulkan**
+(vkd3d-proton) y, si tampoco hay, con **WARP** (render por software de Windows, lento pero anda en
+cualquier PC, máquina virtual o escritorio remoto; también es lo que usan las placas que solo tienen
+OpenGL).
 
 **¿Tiene virus?**
 No. El código está acá completo y el `.zip` se arma desde este mismo código. Algunos antivirus
@@ -222,7 +228,18 @@ desconfían de programas nuevos sin firma digital; podés subir el `.zip` a
 | Texturas blancas | Esperá unos segundos a que terminen de subir; si queda alguna, *Recargar*. |
 | Pocos fps | Ver [Rendimiento](#rendimiento-cómo-llegar-a-60-fps). Actualizá los drivers de video. |
 | Mi amigo no se puede unir | Usá **Online (internet)** si no están en la misma red; revisá que los dos aceptaron el permiso de red. |
-| Mi placa no tiene DirectX 12 | Feditor necesita DirectX 12; no hay modo alternativo por ahora. |
+| Mi placa no tiene DirectX 12 | Feditor pasa solo a Vulkan o a WARP (el título muestra el backend). Elegilo en el combo **Gráficos** del launcher, o `omsi_f4_viewer.exe --gfx vulkan` o un archivo `gfx_backend.txt` al lado del `.exe` con `d3d12`, `vulkan` o `warp`. |
+
+### Backends gráficos
+
+| Backend | Cuándo | Cómo forzarlo |
+|---|---|---|
+| `d3d12` | Por defecto: cualquier placa DX11/DX12 con driver actual | `--gfx d3d12` |
+| `vulkan` | Driver DirectX 12 roto pero Vulkan 1.3 OK (usa [vkd3d-proton](https://github.com/HansKristian-Work/vkd3d-proton) + `dxgi.dll` de [DXVK](https://github.com/doitsujin/dxvk), carpeta `vkd3d\`) | `--gfx vulkan` |
+| `warp` | Sin placa útil, solo OpenGL, VM, escritorio remoto | `--gfx warp` |
+
+También sirve la variable de entorno `FEDITOR_GFX`. El log (`GFX_BACKEND` / `GFX_DEVICE`) dice qué
+backend y qué placa se usaron.
 
 ¿Encontraste un error? Abrí un [issue](https://github.com/FelixAyram/Feditor/issues) con el
 `logfile.log` y, si hubo, el `crash_report.txt`.
@@ -282,7 +299,8 @@ with friends in co-op**.
 3. Run **`omsi_f4_viewer.exe`**. Nothing else to install — the zip ships the Visual C++ runtime and
    the spline creator / map packer with their own Python.
 
-Requirements: Windows 10/11 64-bit, a **DirectX 12** GPU and an **OMSI 2** installation (no OMSI files
+Requirements: Windows 10/11 64-bit, any **DirectX 11-class or newer** GPU (the editor picks DirectX 12,
+then Vulkan through vkd3d-proton, then WARP software rendering; force one with `--gfx d3d12|vulkan|warp`) and an **OMSI 2** installation (no OMSI files
 are included). On first start pick your OMSI 2 folder (the one with `Omsi.exe`), then a map and an
 entrypoint. The UI is available in **English and Spanish** and follows your Windows language.
 

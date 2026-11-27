@@ -817,6 +817,57 @@
         if (spline_pick_memo.hit(g_editor_frame_id, mx, my, wvp_t)) return spline_pick_memo.result;
         return spline_pick_memo.store(g_editor_frame_id, mx, my, wvp_t, pick_spline_index_raw(mx, my, fw, fh, wvp_t));
     };
+    // -- Tree click silhouette ------------------------------------------------------------------------------
+    // A tree is two crossed textured quads; clicking the transparent part of the quad next to the crown used to
+    // select it. Per texture, a coarse silhouette of its opaque texels (kW x kH cells, a cell is solid when any
+    // texel in it has alpha >= 128, the renderer's cutout) is built once on a worker and cached; the ray hits a
+    // tree only where the quad's uv falls in a solid cell. Until it is ready the whole quad counts.
+    static constexpr int kTreeSilW = 32, kTreeSilH = 48;
+    struct TreeSilhouette {
+        bool full = true; // no alpha to go by (texture unreadable / fully opaque): the whole quad
+        std::array<std::uint8_t, kTreeSilW * kTreeSilH> cell{};
+    };
+    struct TreeSilCache {
+        std::mutex mu;
+        std::unordered_map<std::string, std::shared_ptr<const TreeSilhouette>> ready;
+        std::unordered_set<std::string> pending;
+    };
+    static TreeSilCache s_tree_sil;
+    auto tree_silhouette = [](const std::string& tex) -> std::shared_ptr<const TreeSilhouette> {
+        if (tex.empty()) return {};
+        std::lock_guard<std::mutex> lk(s_tree_sil.mu);
+        if (const auto it = s_tree_sil.ready.find(tex); it != s_tree_sil.ready.end()) return it->second;
+        if (!s_tree_sil.pending.insert(tex).second) return {};
+        omsi::JobSystem::global().submit(
+            [tex]() {
+                auto sil = std::make_shared<TreeSilhouette>();
+                if (const auto img = gfx::dx12::load_image_cpu_rgba(std::filesystem::path(tex));
+                    img && img->width > 0 && img->height > 0 &&
+                    img->rgba.size() >= static_cast<std::size_t>(img->width) * img->height * 4u) {
+                    const std::uint32_t w = img->width, h = img->height;
+                    for (std::uint32_t y = 0; y < h; ++y) {
+                        const int cy =
+                            (std::min)(kTreeSilH - 1, static_cast<int>(y * kTreeSilH / h));
+                        const std::uint8_t* row = img->rgba.data() + static_cast<std::size_t>(y) * w * 4u;
+                        for (std::uint32_t x = 0; x < w; ++x) {
+                            if (row[x * 4u + 3u] < 128) continue;
+                            const int cx =
+                                (std::min)(kTreeSilW - 1, static_cast<int>(x * kTreeSilW / w));
+                            sil->cell[static_cast<std::size_t>(cy * kTreeSilW + cx)] = 1;
+                        }
+                    }
+                    std::size_t solid = 0;
+                    for (const auto c : sil->cell) solid += c;
+                    // nothing transparent: the plain quad; nothing opaque (alpha unused): never unclickable
+                    sil->full = solid == sil->cell.size() || solid == 0;
+                }
+                std::lock_guard<std::mutex> lk2(s_tree_sil.mu);
+                s_tree_sil.ready[tex] = std::move(sil);
+                s_tree_sil.pending.erase(tex);
+            },
+            omsi::JobSystem::Priority::Low);
+        return {};
+    };
     // OMSI editor pick for [tree]: forest GPU mesh is batched, but selection must be
     // per-tree (sourceObjectIndex). Use CPU billboard/center test, not shared chunk id.
     // out_t: ray parameter on the same near→far ray as renderer.pick_chunk (so the caller can depth-compare).
@@ -870,9 +921,59 @@
         (void)ez;
         std::int32_t best_oid = -1;
         float best_t = 1.e30f;
+        const float rd_len2 = rd[0] * rd[0] + rd[1] * rd[1] + rd[2] * rd[2];
         for (const auto& sp : scene_places) {
             if (!sp.alive || !sp.is_tree) continue;
             if (hid_o.count(sp.object_id)) continue;
+            // The drawn mesh: two crossed unit quads (editor_tree_billboard.cpp) under the chunk's world matrix.
+            // Ray into that unit space; the hit's uv must land on the texture's silhouette.
+            float wt[16]{};
+            if (have_ray && rd_len2 > 1e-12f && renderer.chunk_world_transposed(sp.chunk, wt)) {
+                // cheap reject: ray vs the tree's bounding sphere
+                const float th_ = (std::max)(sp.height, 1.f);
+                const float rad = std::sqrt(sp.half_xy * sp.half_xy * 2.f + 0.25f * th_ * th_) + 0.5f;
+                const float px = sp.tx - ro[0], py = sp.ty - ro[1], pz = sp.tz + 0.5f * th_ - ro[2];
+                const float tc = (px * rd[0] + py * rd[1] + pz * rd[2]) / rd_len2;
+                const float qx = px - rd[0] * tc, qy = py - rd[1] * tc, qz = pz - rd[2] * tc;
+                if (qx * qx + qy * qy + qz * qz > rad * rad) continue;
+                DirectX::XMFLOAT4X4 wm{};
+                std::memcpy(&wm, wt, sizeof(wm));
+                DirectX::XMVECTOR det{};
+                const DirectX::XMMATRIX inv =
+                    DirectX::XMMatrixInverse(&det, DirectX::XMMatrixTranspose(DirectX::XMLoadFloat4x4(&wm)));
+                if (std::fabs(DirectX::XMVectorGetX(det)) < 1e-12f) continue;
+                DirectX::XMFLOAT3 lo{}, ld{};
+                DirectX::XMStoreFloat3(&lo,
+                                       DirectX::XMVector3Transform(DirectX::XMVectorSet(ro[0], ro[1], ro[2], 1.f), inv));
+                DirectX::XMStoreFloat3(
+                    &ld, DirectX::XMVector3TransformNormal(DirectX::XMVectorSet(rd[0], rd[1], rd[2], 0.f), inv));
+                const auto sil = tree_silhouette(sp.tree_tex);
+                auto solid_at = [&](float u, float v) {
+                    if (!sil || sil->full) return true;
+                    const int cx = std::clamp(static_cast<int>(u * kTreeSilW), 0, kTreeSilW - 1);
+                    const int cy = std::clamp(static_cast<int>(v * kTreeSilH), 0, kTreeSilH - 1);
+                    return sil->cell[static_cast<std::size_t>(cy * kTreeSilW + cx)] != 0;
+                };
+                float t_hit = 1e30f;
+                // quad A: plane y = 0, u = x + 0.5; quad B: plane x = 0, u = y + 0.5; both v = 1 - z
+                if (std::fabs(ld.y) > 1e-9f) {
+                    const float t = -lo.y / ld.y;
+                    const float x = lo.x + t * ld.x, z = lo.z + t * ld.z;
+                    if (t >= 0.f && x >= -0.5f && x <= 0.5f && z >= 0.f && z <= 1.f && solid_at(x + 0.5f, 1.f - z))
+                        t_hit = (std::min)(t_hit, t);
+                }
+                if (std::fabs(ld.x) > 1e-9f) {
+                    const float t = -lo.x / ld.x;
+                    const float y = lo.y + t * ld.y, z = lo.z + t * ld.z;
+                    if (t >= 0.f && y >= -0.5f && y <= 0.5f && z >= 0.f && z <= 1.f && solid_at(y + 0.5f, 1.f - z))
+                        t_hit = (std::min)(t_hit, t);
+                }
+                if (t_hit < best_t) {
+                    best_t = t_hit;
+                    best_oid = sp.object_id;
+                }
+                continue;
+            }
             // v69: pick the projected footprint of THIS tree, not a shared forest/chunk.
             // The old center-radius test only sampled one vertical line and could miss the
             // billboard when the camera moved to another part of the tile.
@@ -894,7 +995,7 @@
             const float t0 = ray_tri(p0x, p0y, z0, p1x, p1y, z0, p1x, p1y, z1);
             const float t1 = ray_tri(p0x, p0y, z0, p1x, p1y, z1, p0x, p0y, z1);
             const float t = (std::min)(t0, t1);
-            if (t < best_t) {
+            if (t < best_t && t < 1e29f) {
                 best_t = t;
                 best_oid = sp.object_id;
             }
@@ -991,6 +1092,13 @@
     // hit is remembered for the click handler (its details / delete window, mod_ai_traffic). Both compete by
     // ray depth with the scenery, as the forest above.
     std::function<int(float, float, float, float, const float*, float*)> parked_pick_hook;
+    // A hovered / selected parking space: tint its parked car, or show its helper box for this frame while
+    // "Car park real" hides the boxes (the selection colour went to a hidden mesh: nothing turned red).
+    std::function<void(std::int32_t, float, float, float, float)> parked_hot_hook;
+    // G on one object: X / Y lock the move to that axis (Z is the existing height mode), F6 switches the axes
+    // between the object's own (heading) and the world's. Same in walk-edit (F7) and in the normal view.
+    int obj_grab_axis = -1;          // -1 free, 0 X, 1 Y
+    bool obj_grab_axis_local = true; // F6
     std::function<bool(float, float, float, float, const float*, float*, std::uint64_t*)> ai_pick_hook;
     bool ai_pick_won = false;
     std::uint64_t ai_pick_id = 0;

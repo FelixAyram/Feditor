@@ -191,12 +191,13 @@
             o3d_pick.obj_id = -1;
             o3d_pick.meshes.clear();
         }
-        const ImGuiViewport* vp = ImGui::GetMainViewport();
-        ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x + vp->WorkSize.x * 0.5f, vp->WorkPos.y + 60.f), ImGuiCond_Appearing,
-                                ImVec2(0.5f, 0.f));
+        ui::float_slot_begin("o3d_pick", 25); // docked with the other small windows
         ImGui::SetNextWindowSize(ImVec2(460.f, 0.f), ImGuiCond_Appearing);
         bool open = true;
-        if (ImGui::Begin("Editar mesh .o3d##o3d_pick", &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize)) {
+        const bool o3d_pick_drawn =
+            ImGui::Begin("Editar mesh .o3d##o3d_pick", &open, ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize);
+        ui::float_slot_end();
+        if (o3d_pick_drawn) {
             ImGui::TextColored(ImVec4(1.f, 0.82f, 0.25f, 1.f), "Pick: hace click en un objeto del mapa");
             if (!po) {
                 ImGui::TextDisabled("(ningun objeto seleccionado)");

@@ -132,10 +132,11 @@
     int fbw = 0, fbh = 0;
     glfwGetFramebufferSize(window, &fbw, &fbh);
     gfx::dx12::HelloO3dRenderer renderer;
-    report_boot(0.68f, "Inicializando renderer DX12…");
+    report_boot(0.68f, std::string("Inicializando gráficos: ") + gfx::backend::label(gfx::backend::active()) + "…");
     if (!renderer.initialize(glfwGetWin32Window(window), static_cast<std::uint32_t>((std::max)(fbw, 1)),
                              static_cast<std::uint32_t>((std::max)(fbh, 1)), true)) {
         log::error("HelloO3dRenderer init failed");
+        if (gfx::backend::relaunch_next()) return 0; // next backend in a new process (docs/GFX_BACKENDS.md)
         return 7;
     }
     boot_trace.mark("dx12_init");
@@ -459,6 +460,7 @@
         std::int32_t parent_id = 0; // attachObj child → parent instance
         bool pinned = false; // survive tile unload (marquee clone / transient until placed)
         bool is_tree = false; // unit billboard mesh; scale via half_xy/height
+        std::string tree_tex;  // [tree]: its texture (the click silhouette is built from its alpha)
         int sco_mesh_index = -1; // index in .sco [mesh] list ([visible] links)
         int lod_index = 0;         // OMSI [LOD] band (0 = highest detail)
         float lod_screensize = 1.f; // threshold: show when screensize >= this
@@ -1810,6 +1812,7 @@
             sp.half_xy = width * 0.5f;
             sp.height = height;
             sp.is_tree = true;
+            sp.tree_tex = proto_key;
             scene_places.push_back(std::move(sp));
             ++tree_count;
             note_spawn_item();
@@ -1984,6 +1987,7 @@
             sp.abs_z = abs_z;
             sp.alive = true;
             sp.is_tree = true;
+            sp.tree_tex = proto_key;
             sp.half_xy = width * 0.5f;
             sp.height = height;
             const XMMATRIX world_m =

@@ -45,6 +45,7 @@
 #include "beamng/bng_session.hpp"
 #include "app/spline_creator_app.hpp"
 #include "gfx/common/rhi.hpp"
+#include "gfx/gfx_backend.hpp"
 #include "gfx/debug_mesh.hpp"
 #include "omsi/test/vehicle_test_runner.hpp"
 
@@ -248,6 +249,11 @@ int main(int argc, char** argv) {
     omsi::log::init();
 
     omsi::log::info("omsi_f4_viewer start");
+#ifdef _WIN32
+    // Before anything loads d3d12.dll/dxgi.dll (delay-loaded): pick d3d12 / vulkan (vkd3d) / warp, and
+    // relaunch with the next backend at once if no device can be created (docs/GFX_BACKENDS.md).
+    omsi::gfx::backend::select_early();
+#endif
 
     omsi::log::info("log file: " + omsi::log::log_path().string());
     omsi::crash_report::note("main boot");
@@ -302,6 +308,7 @@ int main(int argc, char** argv) {
             } else if (warg_is(arg, L"--dump-maps")) headless_dump = true;
             else if (warg_is(arg, L"--load-only")) load_only = true;
             else if (warg_is(arg, L"--view-only")) cli_view_only = true;
+            else if (warg_is(arg, L"--gfx") && i + 1 < wcmd.argc) ++i; // read by gfx::backend::select_early
             else if (warg_is(arg, L"--debug-cube")) debug_cube = true;
             else if (warg_is(arg, L"--debug-o3d")) {
                 debug_o3d = true;
@@ -634,7 +641,26 @@ int main(int argc, char** argv) {
             want_beamng = true;
             continue;
         }
-        if (picked && picked->confirmed) save_game_pref("omsi");
+        if (picked && picked->confirmed) {
+            save_game_pref("omsi");
+#ifdef _WIN32
+            // "Gráficos" combo: remember it; a backend other than the running one restarts straight into the map.
+            const auto gk = static_cast<omsi::gfx::backend::Kind>(picked->gfx_backend);
+            if (gk != omsi::gfx::backend::saved()) omsi::gfx::backend::save(gk);
+            if (omsi::gfx::backend::needs_relaunch(gk)) {
+                omsi::options::save_omsi_root(picked->omsi_root);
+                auto q = [](std::wstring s) { // quoted argument (a trailing '\' would escape the quote)
+                    while (!s.empty() && (s.back() == L'\\' || s.back() == L'/')) s.pop_back();
+                    return L"\"" + s + L"\"";
+                };
+                std::wstring extra = L"--omsi " + q(picked->omsi_root.wstring()) + L" --map " +
+                                     q(picked->global_cfg.wstring()) + L" --entry " +
+                                     std::to_wstring(picked->entrypoint_index);
+                if (picked->view_only) extra += L" --view-only";
+                if (omsi::gfx::backend::relaunch_as(gk, extra)) return 0;
+            }
+#endif
+        }
         selection = picked;
         break;
     }

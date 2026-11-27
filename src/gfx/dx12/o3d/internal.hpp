@@ -852,8 +852,21 @@ R"(
         //  light alone - D3DTOP_BLENDCURRENTALPHA; without, by the material's factor. Unmasked, 3_ggr_7's
         //  walls mirrored the sky wall to wall: chrome)
         const float daylight = saturate(gAmbientScale + 0.05);
-        const float k = ((((int)(gOpacityMapOn + 0.5)) & 32) != 0) ? saturate(reflMask) * daylight
-                                                                     : saturate(gEnvStrength) * daylight;
+        // Paint that says nothing about how much it mirrors - [matl_envmap] ... 1 (or 10) with no mask, the
+        // stock car bodies, or a mask read from a texture with no alpha channel (a 24-bit repaint samples 255
+        // everywhere: the MAN EN92's .bmp schemes) - is a clear coat, as openOMSI shades it: a lacquer's 4 %
+        // rising towards grazing (Schlick), not the factor's whole sphere map (every car a chrome mirror).
+        // Authored masks (the EN92's own 15 / 74 of 255), factors under 1 (panes, dashboards, building
+        // windows) and blended glass keep Omsi.exe's blend.
+        const bool env_masked = ((((int)(gOpacityMapOn + 0.5)) & 32) != 0);
+        const bool env_glass = gAlphaMode > 1.5 && gAlphaMode < 2.5;
+        const bool env_unsaid = !env_glass && (env_masked ? reflMask > 0.998 : gEnvStrength > 0.99);
+        float k = env_masked ? saturate(reflMask) * daylight : saturate(gEnvStrength) * daylight;
+        if (env_unsaid) {
+            const float nv = saturate(abs(dot(normalize(Ngeom), -e)));
+            const float f = 1.0 - nv;
+            k = min(0.04 + 0.96 * f * f * f * f * f, 0.45) * daylight;
+        }
         lit = lerp(lit, env, k);
     }
     // Quilez squared fog: cool→warm by sunAmount.
@@ -1262,8 +1275,21 @@ float4 ps_main(VSOut pin) : SV_TARGET {
         //  light alone - D3DTOP_BLENDCURRENTALPHA; without, by the material's factor. Unmasked, 3_ggr_7's
         //  walls mirrored the sky wall to wall: chrome)
         const float daylight = saturate(gAmbientScale + 0.05);
-        const float k = ((((int)(gOpacityMapOn + 0.5)) & 32) != 0) ? saturate(reflMask) * daylight
-                                                                     : saturate(gEnvStrength) * daylight;
+        // Paint that says nothing about how much it mirrors - [matl_envmap] ... 1 (or 10) with no mask, the
+        // stock car bodies, or a mask read from a texture with no alpha channel (a 24-bit repaint samples 255
+        // everywhere: the MAN EN92's .bmp schemes) - is a clear coat, as openOMSI shades it: a lacquer's 4 %
+        // rising towards grazing (Schlick), not the factor's whole sphere map (every car a chrome mirror).
+        // Authored masks (the EN92's own 15 / 74 of 255), factors under 1 (panes, dashboards, building
+        // windows) and blended glass keep Omsi.exe's blend.
+        const bool env_masked = ((((int)(gOpacityMapOn + 0.5)) & 32) != 0);
+        const bool env_glass = gAlphaMode > 1.5 && gAlphaMode < 2.5;
+        const bool env_unsaid = !env_glass && (env_masked ? reflMask > 0.998 : gEnvStrength > 0.99);
+        float k = env_masked ? saturate(reflMask) * daylight : saturate(gEnvStrength) * daylight;
+        if (env_unsaid) {
+            const float nv = saturate(abs(dot(normalize(Ngeom), -e)));
+            const float f = 1.0 - nv;
+            k = min(0.04 + 0.96 * f * f * f * f * f, 0.45) * daylight;
+        }
         lit = lerp(lit, env, k);
     }
     {
@@ -1577,6 +1603,9 @@ struct HelloO3dRenderer::Impl {
     D3D12_GPU_DESCRIPTOR_HANDLE smaa_blend_srv_gpu{};
     D3D12_GPU_DESCRIPTOR_HANDLE smaa_aux_srv_gpu{}; // edges..search table base
     ComPtr<ID3D12Resource> depth_buffer;
+    D3D12_CPU_DESCRIPTOR_HANDLE depth_ro_dsv_cpu{}; // read-only DSV on depth_buffer (light shafts sample it)
+    D3D12_CPU_DESCRIPTOR_HANDLE main_rtv_cpu{};     // scene RTV of the current main pass (shafts rebind it)
+    D3D12_GPU_DESCRIPTOR_HANDLE depth_srv_gpu{};    // scene depth SRV (R32_FLOAT view of the typeless depth)
     ComPtr<ID3D12Resource> axis_vertex_buffer;
     ComPtr<ID3D12Resource> constant_buffer;
     ComPtr<ID3D12Resource> axis_constant_buffer;
@@ -1836,7 +1865,7 @@ bool ensure_csm_resources(HelloO3dRenderer::Impl& d);
 void update_csm_matrices(HelloO3dRenderer::Impl& d, int only_cascade = -1);
 // only_cascade >= 0: that cascade alone this frame (the others keep their slice and matrix); -1 all stale ones
 void render_csm_pass(HelloO3dRenderer::Impl& d, ID3D12GraphicsCommandList* cmd, std::uint32_t frame_index,
-                     int only_cascade = -1, bool serial = false);
+                     int only_cascade = -1, bool serial = false, int also_cascade = -1);
 void csm_end_frame_barrier(HelloO3dRenderer::Impl& d, ID3D12GraphicsCommandList* cmd);
 bool ensure_sky_resources(HelloO3dRenderer::Impl& d);
 void draw_sky_pass(HelloO3dRenderer::Impl& d, ID3D12GraphicsCommandList* cmd, std::uint32_t frame, float vp_w,
@@ -1845,6 +1874,8 @@ void draw_water_pass(HelloO3dRenderer::Impl& d, ID3D12GraphicsCommandList* cmd, 
                      float vp_h);
 void draw_precip_pass(HelloO3dRenderer::Impl& d, ID3D12GraphicsCommandList* cmd, std::uint32_t frame, float vp_w,
                       float vp_h);
+void draw_shaft_pass(HelloO3dRenderer::Impl& d, ID3D12GraphicsCommandList* cmd, std::uint32_t frame, float vp_w,
+                     float vp_h);
 bool sw_create_water_precip_pipelines(HelloO3dRenderer::Impl& d);
 void draw_corona_pass(HelloO3dRenderer::Impl& d, ID3D12GraphicsCommandList* cmd, std::uint32_t frame, float vp_w,
                       float vp_h);

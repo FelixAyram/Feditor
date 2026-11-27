@@ -24,6 +24,8 @@ struct LaunchSelection {
     bool view_only = false;
     // User pressed "BeamNG.drive" at the top: open the BeamNG launcher instead (confirmed stays false).
     bool switch_to_beamng = false;
+    // "Gráficos" combo: 0 auto, 1 d3d12, 2 vulkan, 3 warp (gfx::backend::Kind order). Saved to gfx_backend.txt.
+    int gfx_backend = 0;
 };
 
 // BeamNG.drive launcher (install / user folder / level / spawn / load radius).
