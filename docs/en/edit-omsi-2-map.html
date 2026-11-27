@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to edit an OMSI 2 map step by step (free, with Feditor)</title>
+<meta name="description" content="Guide to editing OMSI 2 maps with Feditor: open global.cfg, pick a tile, move and rotate .sco objects, edit .sli splines, entrypoints and car parks, undo, save with Ctrl+S and pack the map into a .zip.">
+<meta name="robots" content="index, follow, max-snippet:-1">
+<link rel="alternate" hreflang="es" href="https://felixayram.github.io/Feditor/editar-mapa-omsi-2.html">
+<link rel="alternate" hreflang="en" href="https://felixayram.github.io/Feditor/en/edit-omsi-2-map.html">
+<link rel="canonical" href="https://felixayram.github.io/Feditor/en/edit-omsi-2-map.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="How to edit an OMSI 2 map step by step">
+<meta property="og:description" content="Open the map, pick a tile, edit .sco objects and .sli splines, save with Ctrl+S, pack the map.">
+<meta property="og:url" content="https://felixayram.github.io/Feditor/en/edit-omsi-2-map.html">
+<meta property="og:locale" content="en_US">
+<meta property="og:image" content="https://felixayram.github.io/Feditor/assets/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0d1117">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230d1117'/%3E%3Cpath d='M18 16h28v8H26v8h16v8H26v12h-8z' fill='%232f81f7'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<header><div class="wrap">
+  <div class="brand">F<span>editor</span></div>
+  <nav><a href="index.html">Home</a><a href="install.html">Install</a><a href="edit-omsi-2-map.html">Edit a map</a><a href="coop.html">Co-op</a><a href="../editar-mapa-omsi-2.html" hreflang="es">Español</a><a href="https://github.com/FelixAyram/Feditor">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+<article>
+<h1>How to edit an OMSI 2 map step by step</h1>
+<p class="lead">With <a href="index.html">Feditor</a>, a <strong>free OMSI 2 map editor</strong>, you edit
+the map directly on the original files: <code>.map</code> tiles, <code>.sli</code> splines,
+<code>.sco</code> objects and <code>global.cfg</code>. What you save keeps working in OMSI 2 with no
+conversion.</p>
+
+<div class="box"><strong>Before you start:</strong> copy the map folder inside <code>OMSI 2\maps</code>.
+Feditor works on your real map: if you save, it saves.</div>
+
+<h2>1. Open the map</h2>
+<ol>
+  <li>Run <code>omsi_f4_viewer.exe</code> and pick your OMSI 2 folder the first time.</li>
+  <li>Pick the <strong>map</strong> (its <code>global.cfg</code>) and an <strong>entrypoint</strong>
+      (where the camera starts).</li>
+  <li>Choose <strong>edit</strong> (or <strong>read-only</strong>, where nothing can be modified).</li>
+  <li>You can also open a single tile: <em>File → Open .map tile</em>.</li>
+</ol>
+
+<h2>2. Move around</h2>
+<table>
+  <tbody>
+    <tr><td>Orbit</td><td>Right mouse button + drag</td></tr>
+    <tr><td>Zoom</td><td>Mouse wheel</td></tr>
+    <tr><td>Pan</td><td>Middle mouse button + drag</td></tr>
+    <tr><td>Select</td><td>Left click</td></tr>
+    <tr><td>Undo / Save</td><td>Ctrl+Z / Ctrl+S</td></tr>
+    <tr><td>Walk mode</td><td>F7 (cycles: walk-edit → walk-only → exit)</td></tr>
+  </tbody>
+</table>
+
+<h2>3. Edit objects and splines</h2>
+<ul>
+  <li><strong><code>.sco</code> objects</strong>: click to select, then move, rotate, copy or delete.
+      Selecting one shows its vertices, textures, LODs and the files it uses.</li>
+  <li><strong><code>.sli</code> splines</strong>: roads and paths. Create them from the catalogue or with
+      the <strong>spline creator</strong> (<em>Tools → Spline creator…</em>), which has a profile,
+      textures and a 3D preview.</li>
+  <li><strong>Tiles and terrain</strong>: every tile is a <code>.map</code>; the tile distance is set in
+      <em>View → Graphics</em>.</li>
+  <li><strong>Entrypoints, paths, traffic lights and car parks</strong> are editable too.</li>
+  <li><strong>Traffic</strong>: click an AI car to inspect or delete it; click a parked car to select its
+      car park. <em>Car park real</em> toggles between real cars and edit boxes.</li>
+</ul>
+
+<h2>4. Edit on foot (walk mode)</h2>
+<p><strong>F7</strong> puts you on foot: <strong>WASD</strong> to walk, <strong>Shift</strong> to run,
+<strong>Space</strong> to jump. In <em>walk-edit</em> a crosshair appears: click picks an object and
+carries it, click again or right-click drops it, <strong>R</strong> rotates, <strong>Del</strong> deletes,
+<strong>N</strong> spawns the catalogue object you are aiming at, <strong>E</strong> shows the cursor for
+the panels.</p>
+
+<h2>5. Save</h2>
+<p><strong>Ctrl+S</strong> saves your changes in the map. You can keep using the stock OMSI 2 editor on
+the same map: Feditor complements it.</p>
+
+<h2>6. Share the map</h2>
+<p><em>File → Pack map (.zip)…</em> bundles the map and everything it uses (objects, meshes, textures,
+scripts, sounds, splines, AI vehicles) into a <code>.zip</code> ready to share. Base-game and Steam DLC
+content can be excluded so the package stays small and legal to share.</p>
+<p><a class="cta" href="https://github.com/FelixAyram/Feditor/releases/latest">⬇️ Download Feditor free</a></p>
+
+<h2>Next</h2>
+<ul>
+  <li><a href="install.html">How to install Feditor</a></li>
+  <li><a href="coop.html">Building a map with friends (co-op)</a></li>
+</ul>
+</article>
+</main>
+<footer><div class="wrap">Feditor is free software (AGPL-3.0). OMSI and OMSI 2 are trademarks of MR Software / Aerosoft; this is an independent community project. · <a href="https://github.com/FelixAyram/Feditor">GitHub</a></div></footer>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "How to edit an OMSI 2 map step by step",
+  "totalTime": "PT15M",
+  "tool": [{"@type": "HowToTool", "name": "Feditor"}],
+  "supply": [{"@type": "HowToSupply", "name": "OMSI 2 and the map to edit"}],
+  "step": [
+    {"@type": "HowToStep", "name": "Open the map", "text": "Run omsi_f4_viewer.exe, pick your OMSI 2 folder, the map and an entrypoint, then enter edit mode."},
+    {"@type": "HowToStep", "name": "Move around", "text": "Right button orbits, wheel zooms, middle button pans, left click selects."},
+    {"@type": "HowToStep", "name": "Edit objects and splines", "text": "Move, rotate, copy or delete .sco objects; create and edit .sli splines with the spline creator."},
+    {"@type": "HowToStep", "name": "Edit on foot", "text": "Press F7 for walk mode and edit with the centre crosshair."},
+    {"@type": "HowToStep", "name": "Save", "text": "Save with Ctrl+S in the original OMSI 2 file formats."},
+    {"@type": "HowToStep", "name": "Pack", "text": "Use File -> Pack map (.zip) to share the map with its dependencies."}
+  ]
+}
+</script>
+</body>
+</html>

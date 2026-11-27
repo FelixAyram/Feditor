@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Edit an OMSI 2 map with friends — Feditor co-op mode</title>
+<meta name="description" content="How to edit the same OMSI 2 map with several people at once in Feditor: create a room, invite over LAN or the internet (automatic Cloudflare tunnel, no port forwarding) and join with a code.">
+<meta name="robots" content="index, follow, max-snippet:-1">
+<link rel="alternate" hreflang="es" href="https://felixayram.github.io/Feditor/cooperativo.html">
+<link rel="alternate" hreflang="en" href="https://felixayram.github.io/Feditor/en/coop.html">
+<link rel="canonical" href="https://felixayram.github.io/Feditor/en/coop.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="Edit an OMSI 2 map with friends — Feditor co-op">
+<meta property="og:description" content="Several people editing the same OMSI 2 map live, over LAN or the internet.">
+<meta property="og:url" content="https://felixayram.github.io/Feditor/en/coop.html">
+<meta property="og:locale" content="en_US">
+<meta property="og:image" content="https://felixayram.github.io/Feditor/assets/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0d1117">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230d1117'/%3E%3Cpath d='M18 16h28v8H26v8h16v8H26v12h-8z' fill='%232f81f7'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<header><div class="wrap">
+  <div class="brand">F<span>editor</span></div>
+  <nav><a href="index.html">Home</a><a href="install.html">Install</a><a href="edit-omsi-2-map.html">Edit a map</a><a href="coop.html">Co-op</a><a href="../cooperativo.html" hreflang="es">Español</a><a href="https://github.com/FelixAyram/Feditor">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+<article>
+<h1>Edit an OMSI 2 map with friends (co-op mode)</h1>
+<p class="lead">Feditor lets <strong>several people edit the same OMSI 2 map at the same time</strong>,
+each on their own PC, seeing the others' changes live. It works over the local network and over the
+internet, with no port forwarding.</p>
+
+<h2>Before you start</h2>
+<ul>
+  <li>Everyone needs <strong>Feditor</strong> and <strong>OMSI 2</strong> with <strong>the same map and
+      the same objects</strong>. Use <em>File → Pack map (.zip)…</em> to pass them around.</li>
+  <li>The first time, Feditor asks for network permission; Windows will ask too. Choose
+      <strong>Allow</strong>.</li>
+</ul>
+
+<h2>Create the room (host)</h2>
+<ol>
+  <li>Open the map in edit mode.</li>
+  <li>Side panel → <strong>Session</strong> tab → <strong>Create room</strong> →
+      <strong>Invite</strong>.</li>
+  <li>Pick how friends connect:
+    <ul>
+      <li><strong>Local network only</strong>: same house/LAN, or a VPN such as Radmin, ZeroTier or
+          Tailscale.</li>
+      <li><strong>Online (internet)</strong>: friends in other houses. Feditor sets up a secure
+          Cloudflare tunnel automatically; the first time takes a few seconds.</li>
+    </ul>
+  </li>
+  <li>Click <strong>Copy code</strong> and send it to your friends.</li>
+</ol>
+
+<h2>Join (guests)</h2>
+<ol>
+  <li><strong>Session</strong> tab → paste the code into <strong>Join with a code</strong> →
+      <strong>Join</strong>.</li>
+</ol>
+
+<h2>Co-op FAQ</h2>
+<table>
+  <thead><tr><th>Question</th><th>Answer</th></tr></thead>
+  <tbody>
+    <tr><td>Do I need to open router ports?</td><td>No: <em>Online (internet)</em> uses an automatic tunnel.</td></tr>
+    <tr><td>My friend can't join</td><td>Use <em>Online (internet)</em> if you're not on the same network, and make sure both allowed network access.</td></tr>
+    <tr><td>Do I see changes live?</td><td>Yes, everyone sees what the others are doing while editing.</td></tr>
+    <tr><td>Objects are missing</td><td>They don't have the same objects: send them the packed map <code>.zip</code>.</td></tr>
+  </tbody>
+</table>
+<p><a class="cta" href="https://github.com/FelixAyram/Feditor/releases/latest">⬇️ Download Feditor free</a></p>
+
+<h2>Next</h2>
+<ul>
+  <li><a href="install.html">How to install Feditor</a></li>
+  <li><a href="edit-omsi-2-map.html">How to edit an OMSI 2 map step by step</a></li>
+</ul>
+</article>
+</main>
+<footer><div class="wrap">Feditor is free software (AGPL-3.0). OMSI and OMSI 2 are trademarks of MR Software / Aerosoft; this is an independent community project. · <a href="https://github.com/FelixAyram/Feditor">GitHub</a></div></footer>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "Edit an OMSI 2 map with friends in co-op",
+  "tool": [{"@type": "HowToTool", "name": "Feditor"}],
+  "step": [
+    {"@type": "HowToStep", "name": "Allow network access", "text": "Accept the Windows network permission prompt the first time."},
+    {"@type": "HowToStep", "name": "Create room", "text": "In the Session tab choose Create room and then Invite."},
+    {"@type": "HowToStep", "name": "Pick a connection", "text": "Local network (LAN or VPN) or Online through the automatic Cloudflare tunnel."},
+    {"@type": "HowToStep", "name": "Share the code", "text": "Copy the room code and send it to your friends."},
+    {"@type": "HowToStep", "name": "Join", "text": "Guests paste the code into Join with a code and click Join."}
+  ]
+}
+</script>
+</body>
+</html>

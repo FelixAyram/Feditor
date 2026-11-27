@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Feditor — free OMSI 2 map editor (open source, DirectX 12)</title>
+<meta name="description" content="Feditor is a free, open-source OMSI 2 map editor and 3D viewer: opens .map tiles, .sli splines and .sco objects, DirectX 12 renderer at 60 fps, walk mode, bus driving with openOMSI physics, co-op map building and a map packer. Direct download, nothing else to install.">
+<meta name="keywords" content="OMSI 2 map editor, OMSI editor, free OMSI 2 editor, OMSI 2 editor download, OMSI map editor free, OMSI 2 Karteneditor, openOMSI, open source OMSI editor, OMSI 2 modding tools, Feditor">
+<meta name="author" content="Felix Ayram">
+<meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1">
+<link rel="alternate" hreflang="es" href="https://felixayram.github.io/Feditor/">
+<link rel="alternate" hreflang="en" href="https://felixayram.github.io/Feditor/en/">
+<link rel="alternate" hreflang="x-default" href="https://felixayram.github.io/Feditor/">
+<link rel="alternate" type="application/atom+xml" title="Feditor — releases" href="../feed.xml">
+<link rel="canonical" href="https://felixayram.github.io/Feditor/en/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Feditor">
+<meta property="og:title" content="Feditor — free OMSI 2 map editor">
+<meta property="og:description" content="Free, open-source OMSI 2 map editor and 3D viewer: DirectX 12, 60 fps, walk mode, bus driving with openOMSI, co-op map building.">
+<meta property="og:url" content="https://felixayram.github.io/Feditor/en/">
+<meta property="og:locale" content="en_US">
+<meta property="og:locale:alternate" content="es_ES">
+<meta property="og:image" content="https://felixayram.github.io/Feditor/assets/og-image.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Feditor: free OMSI 2 map editor">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Feditor — free OMSI 2 map editor">
+<meta name="twitter:description" content="Free, open-source OMSI 2 map editor: DirectX 12, 60 fps, walk mode, openOMSI bus physics, co-op.">
+<meta name="twitter:image" content="https://felixayram.github.io/Feditor/assets/og-image.png">
+<meta name="theme-color" content="#0d1117">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230d1117'/%3E%3Cpath d='M18 16h28v8H26v8h16v8H26v12h-8z' fill='%232f81f7'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<header><div class="wrap">
+  <div class="brand">F<span>editor</span></div>
+  <nav><a href="index.html">Home</a><a href="install.html">Install</a><a href="edit-omsi-2-map.html">Edit a map</a><a href="coop.html">Co-op</a><a href="../index.html" hreflang="es">Español</a><a href="https://github.com/FelixAyram/Feditor">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+<article>
+<h1>Feditor — free <strong>OMSI 2 map editor</strong> and 3D viewer</h1>
+<p class="lead"><strong>Feditor</strong> is a <strong>free, open-source map editor for OMSI 2</strong>
+(<em>OMSI 2 map editor</em>, <em>OMSI editor</em>, <em>OMSI 2 Karteneditor</em>). It opens OMSI 2 maps
+as they are — <code>.map</code> tiles, <code>.sli</code> splines, <code>.sco</code> objects, terrain,
+textures, entrypoints and traffic — renders them with a modern <strong>DirectX 12</strong> renderer
+aimed at <strong>60 fps</strong>, and lets you edit them, walk around on foot, drive a bus with the
+<a href="https://github.com/openOMSI-org/openOMSI">openOMSI</a> vehicle simulation and
+<strong>build maps together with friends in co-op</strong>.</p>
+
+<p><a class="cta" href="https://github.com/FelixAyram/Feditor/releases/latest">⬇️ Download the latest version</a></p>
+
+<div class="box">💸 <strong>Feditor is free and always will be.</strong> No ads, no account, no paid edition.
+The only official download is <a href="https://github.com/FelixAyram/Feditor/releases/latest">Releases</a>.</div>
+
+<h2>Why Feditor</h2>
+<table>
+  <thead><tr><th></th><th>Feditor</th><th>Stock OMSI 2 editor</th></tr></thead>
+  <tbody>
+    <tr><td>Price</td><td><strong>Free</strong></td><td>Bundled with the game</td></tr>
+    <tr><td>Graphics</td><td>DirectX 12, cascaded shadows, SMAA, fog, sky and time of day</td><td>DirectX 9</td></tr>
+    <tr><td>Performance</td><td>Multithreaded streaming, 60 fps target</td><td>Single-threaded</td></tr>
+    <tr><td>Co-op</td><td><strong>Yes</strong>: several people edit the same map at once</td><td>No</td></tr>
+    <tr><td>Walk the map</td><td>Yes, and edit on foot</td><td>No</td></tr>
+    <tr><td>Drive a bus</td><td>Yes (openOMSI simulation)</td><td>Only in the game</td></tr>
+    <tr><td>Pack a map into a .zip</td><td>Yes</td><td>No</td></tr>
+    <tr><td>Open source</td><td>Yes (AGPL-3.0)</td><td>No</td></tr>
+  </tbody>
+</table>
+
+<h2>Features</h2>
+<ul>
+  <li><strong>Full OMSI 2 map editing</strong>: move, rotate, copy, delete and create <code>.sco</code>
+      objects and <code>.sli</code> splines; edit tiles, terrain, entrypoints, paths, traffic lights and
+      car parks. Undo (<strong>Ctrl+Z</strong>) and save (<strong>Ctrl+S</strong>).</li>
+  <li><strong>Fast streaming renderer</strong>: background loading, LODs, on-screen-size culling,
+      textures uploaded to the GPU without freezing the editor.</li>
+  <li><strong>Walk mode (F7)</strong>: WASD to walk, Shift to run, Space to jump; in walk-edit the
+      crosshair picks and carries objects (click / right-click to drop, <strong>R</strong> rotate,
+      <strong>Del</strong> delete, <strong>N</strong> spawn, <strong>E</strong> shows the cursor).</li>
+  <li><strong>Drive a bus</strong>: pick a bus from your OMSI 2 install; physics, engine, gearbox and
+      sounds come from openOMSI. Stop (&lt; 5 km/h) and press <strong>F7</strong> to get off, carry the
+      bus like an object, <strong>F7</strong> next to it to get back in. AI traffic and parked cars
+      included.</li>
+  <li><strong>Co-op building</strong>: several people edit the same map at once over LAN or the internet
+      (automatic Cloudflare tunnel, no port forwarding).</li>
+  <li><strong>Spline creator</strong>: profile, textures and 3D preview for new or existing
+      <code>.sli</code> files.</li>
+  <li><strong>Map packer</strong>: zips a map with everything it uses (objects, meshes, textures,
+      scripts, sounds, splines, AI vehicles), optionally excluding base-game and Steam DLC content.</li>
+  <li><strong>Auto-update</strong>: tells you when a new version is out, downloads it, restarts.</li>
+  <li><strong>English and Spanish UI</strong>, following your Windows language.</li>
+</ul>
+
+<h2>Requirements</h2>
+<ul>
+  <li><strong>Windows 10 or 11, 64-bit.</strong></li>
+  <li>Any <strong>DirectX 11-class or newer GPU</strong> with a Windows 10/11 driver (NVIDIA GTX 400+,
+      AMD HD 7000 / RX, Intel HD 4400+). Feditor picks the backend itself:
+      <strong>DirectX 12</strong> → <strong>Vulkan</strong> (vkd3d-proton) → <strong>WARP</strong>
+      software rendering. Force one with <code>--gfx d3d12|vulkan|warp</code>.</li>
+  <li>An <strong>OMSI 2</strong> installation (Steam or otherwise). No OMSI files are included.</li>
+  <li>Recommended: 8 GB RAM, SSD, 4+ cores.</li>
+</ul>
+
+<h2>Quick start</h2>
+<ol>
+  <li>Get <code>Feditor-&lt;version&gt;.zip</code> from
+      <a href="https://github.com/FelixAyram/Feditor/releases/latest">Releases</a>
+      (you don't need “Source code”).</li>
+  <li>Unzip it into a folder you can write to, e.g. <code>C:\Games\Feditor</code>
+      (avoid <code>Program Files</code>).</li>
+  <li>Run <code>omsi_f4_viewer.exe</code>.</li>
+  <li>On first start pick your OMSI 2 folder (the one with <code>Omsi.exe</code>), then a map, an
+      entrypoint and either edit or read-only mode.</li>
+</ol>
+<p>Nothing else to install: the zip ships the Visual C++ runtime, the shaders, fonts, the spline creator
+and the map packer with their own Python. If SmartScreen warns you, choose
+<strong>More info → Run anyway</strong> (it happens with any new unsigned program).</p>
+
+<h2>Guides</h2>
+<ul>
+  <li><a href="install.html">How to install Feditor</a></li>
+  <li><a href="edit-omsi-2-map.html">How to edit an OMSI 2 map step by step</a></li>
+  <li><a href="coop.html">Building a map with friends (co-op)</a></li>
+  <li><a href="../index.html" hreflang="es">Guía en español</a></li>
+</ul>
+
+<h2>FAQ</h2>
+<table>
+  <thead><tr><th>Question</th><th>Answer</th></tr></thead>
+  <tbody>
+    <tr><td>Is Feditor free?</td><td>Yes — free, open source (AGPL-3.0), no ads, no account, no paid edition.</td></tr>
+    <tr><td>Do I need OMSI 2?</td><td>Yes, Feditor reads your OMSI 2 installation.</td></tr>
+    <tr><td>Do edited maps still work in OMSI 2?</td><td>Yes: it saves the original OMSI 2 formats (<code>.map</code>, <code>.sli</code>, <code>.sco</code>, <code>global.cfg</code>).</td></tr>
+    <tr><td>Does it replace the stock editor?</td><td>It complements it: you can use both on the same map.</td></tr>
+    <tr><td>Is it related to openOMSI?</td><td>It uses openOMSI's vehicle simulation to drive buses. Separate projects.</td></tr>
+    <tr><td>Does it run on Linux or Mac?</td><td>Not officially (it needs DirectX 12). On Linux it may work with Proton/Wine + VKD3D, unsupported.</td></tr>
+    <tr><td>Does it have viruses?</td><td>No. The full source is on GitHub and the zip is built from it. Antivirus software is wary of new unsigned binaries.</td></tr>
+  </tbody>
+</table>
+
+<h2>Links</h2>
+<ul>
+  <li><a href="https://github.com/FelixAyram/Feditor">Source code on GitHub</a></li>
+  <li><a href="https://github.com/FelixAyram/Feditor/releases">Downloads (Releases)</a></li>
+  <li><a href="https://github.com/FelixAyram/Feditor/issues">Report a bug</a></li>
+  <li><a href="https://github.com/FelixAyram/Feditor/blob/main/README.md">Full documentation (README)</a></li>
+</ul>
+</article>
+</main>
+<footer><div class="wrap">
+  Feditor is free software under the <strong>GNU AGPL-3.0</strong>. OMSI and OMSI 2 are trademarks of
+  MR Software / Aerosoft; Feditor is an independent community project, not affiliated with or endorsed
+  by them. · Made by <a href="https://github.com/FelixAyram">@FelixAyram</a>
+</div></footer>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Feditor",
+  "alternateName": ["Feditor OMSI 2 map editor", "OMSI 2 map editor", "OMSI editor", "OMSI 2 Karteneditor"],
+  "description": "Free, open-source map editor and 3D viewer for OMSI 2: opens .map tiles, .sli splines and .sco objects, DirectX 12 renderer at 60 fps, walk mode, openOMSI bus physics, co-op map building and a map packer.",
+  "url": "https://felixayram.github.io/Feditor/en/",
+  "image": "https://felixayram.github.io/Feditor/assets/og-image.png",
+  "downloadUrl": "https://github.com/FelixAyram/Feditor/releases/latest",
+  "codeRepository": "https://github.com/FelixAyram/Feditor",
+  "applicationCategory": "DesignApplication",
+  "applicationSubCategory": "Map editor",
+  "operatingSystem": "Windows 10, Windows 11",
+  "softwareVersion": "0.68",
+  "inLanguage": ["en", "es"],
+  "license": "https://www.gnu.org/licenses/agpl-3.0.html",
+  "isAccessibleForFree": true,
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "EUR", "availability": "https://schema.org/InStock"},
+  "author": {"@type": "Person", "name": "Felix Ayram", "url": "https://github.com/FelixAyram"},
+  "sameAs": ["https://github.com/FelixAyram/Feditor"],
+  "keywords": "OMSI 2 map editor, OMSI editor, free OMSI 2 editor, openOMSI, OMSI 2 tools, OMSI modding"
+}
+</script>
+</body>
+</html>

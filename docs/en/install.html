@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How to install Feditor — free OMSI 2 map editor (step by step)</title>
+<meta name="description" content="How to install Feditor, the free OMSI 2 map editor: download the zip from GitHub Releases, unzip it, run omsi_f4_viewer.exe and pick your OMSI 2 folder. Requirements and common install problems.">
+<meta name="robots" content="index, follow, max-snippet:-1">
+<link rel="alternate" hreflang="es" href="https://felixayram.github.io/Feditor/guia-instalacion.html">
+<link rel="alternate" hreflang="en" href="https://felixayram.github.io/Feditor/en/install.html">
+<link rel="canonical" href="https://felixayram.github.io/Feditor/en/install.html">
+<meta property="og:type" content="article">
+<meta property="og:title" content="How to install Feditor — free OMSI 2 map editor">
+<meta property="og:description" content="Download, unzip, run omsi_f4_viewer.exe and pick your OMSI 2 folder. Under a minute.">
+<meta property="og:url" content="https://felixayram.github.io/Feditor/en/install.html">
+<meta property="og:locale" content="en_US">
+<meta property="og:image" content="https://felixayram.github.io/Feditor/assets/og-image.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="theme-color" content="#0d1117">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230d1117'/%3E%3Cpath d='M18 16h28v8H26v8h16v8H26v12h-8z' fill='%232f81f7'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="../site.css">
+</head>
+<body>
+<header><div class="wrap">
+  <div class="brand">F<span>editor</span></div>
+  <nav><a href="index.html">Home</a><a href="install.html">Install</a><a href="edit-omsi-2-map.html">Edit a map</a><a href="coop.html">Co-op</a><a href="../guia-instalacion.html" hreflang="es">Español</a><a href="https://github.com/FelixAyram/Feditor">GitHub</a></nav>
+</div></header>
+<main class="wrap">
+<article>
+<h1>How to install Feditor, the free OMSI 2 map editor</h1>
+<p class="lead">Feditor has no installer: it is a <code>.zip</code> you unzip and run. It takes less than
+a minute and touches neither the Windows registry nor your OMSI 2 installation.</p>
+
+<h2>Requirements</h2>
+<ul>
+  <li><strong>Windows 10 or 11, 64-bit.</strong></li>
+  <li>Any <strong>DirectX 11-class or newer</strong> GPU with a current driver (NVIDIA GTX 400+,
+      AMD HD 7000 / RX, Intel HD 4400+).</li>
+  <li>An <strong>OMSI 2</strong> installation (Steam or otherwise). Feditor includes no OMSI files.</li>
+  <li>Recommended: 8 GB RAM, SSD, 4+ cores.</li>
+</ul>
+
+<h2>Steps</h2>
+<ol>
+  <li>Open <a href="https://github.com/FelixAyram/Feditor/releases/latest">Releases</a> and download
+      <code>Feditor-&lt;version&gt;.zip</code>. You don't need “Source code”.</li>
+  <li>Unzip <strong>everything</strong> into a folder you can write to, e.g. <code>C:\Games\Feditor</code>.
+      Avoid <code>Program Files</code>.</li>
+  <li>Run <strong><code>omsi_f4_viewer.exe</code></strong>.</li>
+  <li>The first time it asks for your <strong>OMSI 2 folder</strong>: the one containing
+      <code>Omsi.exe</code> (usually
+      <code>C:\Program Files (x86)\Steam\steamapps\common\OMSI 2</code>). It is remembered.</li>
+  <li>Pick a <strong>map</strong>, an <strong>entrypoint</strong> and whether to edit or only view
+      (read-only mode).</li>
+</ol>
+<p><a class="cta" href="https://github.com/FelixAyram/Feditor/releases/latest">⬇️ Download Feditor</a></p>
+
+<h2>If SmartScreen says “Windows protected your PC”</h2>
+<p>Normal for any new unsigned program: click <strong>More info → Run anyway</strong>.</p>
+
+<h2>Troubleshooting</h2>
+<table>
+  <thead><tr><th>Problem</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr><td>Won't start / closes on launch</td><td>Unzip the whole archive (don't run it from inside the zip) and check <code>logfile.log</code> and <code>crash_report.txt</code> next to the <code>.exe</code>.</td></tr>
+    <tr><td>Asks for the OMSI 2 folder every time</td><td>The editor folder must be writable.</td></tr>
+    <tr><td>No DirectX 12 on my GPU</td><td>Feditor falls back to Vulkan, then WARP. Force it with <code>--gfx d3d12|vulkan|warp</code> or a <code>gfx_backend.txt</code> file next to the <code>.exe</code>.</td></tr>
+    <tr><td>Low fps</td><td>Lower tile distance and shadow distance, raise “minimum on-screen size”, reduce AI traffic, update your drivers.</td></tr>
+  </tbody>
+</table>
+
+<h2>Next</h2>
+<ul>
+  <li><a href="edit-omsi-2-map.html">How to edit an OMSI 2 map step by step</a></li>
+  <li><a href="coop.html">Building a map with friends (co-op)</a></li>
+</ul>
+</article>
+</main>
+<footer><div class="wrap">Feditor is free software (AGPL-3.0). OMSI and OMSI 2 are trademarks of MR Software / Aerosoft; this is an independent community project. · <a href="https://github.com/FelixAyram/Feditor">GitHub</a></div></footer>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "HowTo",
+  "name": "How to install Feditor, the free OMSI 2 map editor",
+  "totalTime": "PT1M",
+  "tool": [{"@type": "HowToTool", "name": "Feditor (zip from GitHub Releases)"}],
+  "supply": [{"@type": "HowToSupply", "name": "OMSI 2 installation"}],
+  "step": [
+    {"@type": "HowToStep", "name": "Download", "text": "Download Feditor-<version>.zip from the Releases page."},
+    {"@type": "HowToStep", "name": "Unzip", "text": "Unzip everything into a writable folder such as C:/Games/Feditor."},
+    {"@type": "HowToStep", "name": "Run", "text": "Run omsi_f4_viewer.exe."},
+    {"@type": "HowToStep", "name": "Pick OMSI 2", "text": "Choose the OMSI 2 folder containing Omsi.exe; it is remembered."},
+    {"@type": "HowToStep", "name": "Open a map", "text": "Pick a map, an entrypoint and edit or read-only mode."}
+  ]
+}
+</script>
+</body>
+</html>
