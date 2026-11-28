@@ -46,6 +46,9 @@ void oo_set_ground(OoBus* bus, OoGroundFn fn, void* user);
 void oo_set_obstacles(OoBus* bus, const OoBox* boxes, size_t n);
 void oo_key(OoBus* bus, const char* action, int32_t pressed);
 void oo_autostart(OoBus* bus);
+/* the player's bus on the map of map_dir: its depot file (.hof) and a destination on its signs (line / terminus
+ * texture id when given, else the depot's first terminus); 1 when a depot file was found */
+int32_t oo_bus_set_depot(OoBus* bus, const char* map_dir, const char* line, const char* terminus);
 void oo_tick(OoBus* bus, float dt, float listener_x, float listener_y, float listener_z, float fwd_x, float fwd_y,
              float fwd_z);
 int32_t oo_body_matrix(OoBus* bus, float* out16); /* DirectXMath row-vector matrix, row-major */
@@ -136,7 +139,7 @@ uint64_t oo_traffic_service_bus_stations(OoTraffic* t, const char* bus_path, dou
 /* what car `id` does now (one call per car every half second for the editor's car window) */
 typedef struct OoCarState {
     int32_t action; /* 0 driving 1 accelerating 2 braking 3 queue 4 red light 5 giving way 6 at a stop 7 pulling out /
-                       parking 8 end of its way 9 waiting for room on its exit 10 held by something else (see why) */
+                       parking 8 end of its way 9 waiting for room on its exit 10 held by something else (see why) 11 making way for an emergency vehicle */
     float speed_kmh;
     float stopped_s;
     float why_dist; /* m to what holds it, -1 none */
@@ -152,6 +155,8 @@ void oo_traffic_set_view(OoTraffic* t, double dx, double dy, double dz, float fo
 size_t oo_traffic_car_explain(OoTraffic* t, uint64_t id, char* buf, size_t cap);
 /* platform side of [busstop] object `id` (its 6th string: 0 right, 1 the other, 2 both), before placing buses */
 void oo_traffic_stop_side(OoTraffic* t, int64_t id, float side);
+/* why the last timetable bus was not placed ("" when it was) */
+size_t oo_traffic_last_error(OoTraffic* t, char* buf, size_t cap);
 size_t oo_mesh_file(OoBus* bus, int32_t i, char* buf, size_t cap); /* UTF-8 .o3d path */
 /* [CTC] paint of the player's train mesh i (its first repaint, as OMSI's dialog picks): "<default>	<file>
 " lines */

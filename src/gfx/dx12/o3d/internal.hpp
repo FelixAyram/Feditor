@@ -1440,6 +1440,12 @@ struct HelloO3dRenderer::Impl {
     // translucent remainder of a [matl_alpha] 2 road: blended, no depth write, the road's own vertex shader
     // and culling (its opaque core was drawn with depth by the spline PSO - see draw.cpp ground_core_pass)
     ComPtr<ID3D12PipelineState> pipeline_state_ghost_spline;
+    // editor opacity slider ("fade"): a depth-only prepass of the see-through chunks, then their colour blended
+    // where that depth is (GREATER_EQUAL, reverse-Z, no write) - only each pixel's nearest ghost surface shows over
+    // the scene, whatever order they are drawn in. [0] objects (vs_main), [1] ground layers (vs_surface).
+    // Their own PSOs: alpha_nozwrite stays the real [matl_noZwrite] materials'.
+    ComPtr<ID3D12PipelineState> pipeline_state_fade_depth[2];
+    ComPtr<ID3D12PipelineState> pipeline_state_fade_color[2];
     ComPtr<ID3D12PipelineState> pipeline_state_on_surface_cull;
     // scenery [maplight]s (up to kMaxXLights): x, y, z, core, r, g, b (x intensity), cut-off
     std::vector<float> xlights;

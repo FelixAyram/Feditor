@@ -1236,10 +1236,12 @@
         renderer.set_chunk_visible(rail.chunk, false);
         renderer.set_chunk_fixed_lit(rail.chunk, true);
         renderer.set_chunk_path_rail(rail.chunk, true);
-        // Both styles: Normal + surface_bias (same as classic). OnSurface/decal hid modern under .sli/.sco.
+        // Classic: Normal + surface_bias. Modern: no surface bias, so the path-rail pipeline draws it (vs_rail lifts
+        // it 6 cm over the ground; with the bias the thin strip sat in the road's plane and sank). OnSurface/decal
+        // hid modern under .sli/.sco.
         renderer.set_chunk_render_phase(
             rail.chunk, omsi::gfx::dx12::WorldRenderPhase::Normal,
-            /*surface_bias=*/true, /*decal=*/false);
+            /*surface_bias=*/panel.imgui_state().path_style != 1, /*decal=*/false);
         const auto tint = rail_tint_for(from_obj, owner, pi, typ);
         if (false && tint[3] < 0.01f && panel.imgui_state().path_style == 1)
             renderer.set_chunk_highlight(rail.chunk, 0.92f, 0.75f, 0.35f, 0.95f);

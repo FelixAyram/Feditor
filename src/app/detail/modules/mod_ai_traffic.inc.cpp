@@ -633,6 +633,11 @@
                                                                          stops.size() / 4, tr.line.c_str(), tr.terminus.c_str());
                 if (!id) {
                     ++c_fail;
+                    if (pend) {
+                        char eb[256]{};
+                        oo_traffic_last_error(ai_traffic, eb, sizeof(eb));
+                        ai_pending_why = std::string("no se pudo poner: ") + (eb[0] ? eb : "?");
+                    }
                     continue;
                 }
                 ai_service_buses.push_back({id, di, now});
@@ -715,7 +720,13 @@
                                                             stops.size() / 4, tr.line.c_str(), tr.terminus.c_str());
             if (!id) {
                 ++c_fail;
-                if (pend) ai_pending_why = "sus carriles aun no estan en la red del trafico (" + std::to_string(ent.size() / 2) + " tramos)";
+                if (pend) {
+                    // (openOMSI says why: no bus type, the track not in the lanes yet, something standing there)
+                    char eb[256]{};
+                    oo_traffic_last_error(ai_traffic, eb, sizeof(eb));
+                    ai_pending_why = eb[0] ? std::string("no se pudo poner: ") + eb
+                                           : "sus carriles aun no estan en la red del trafico (" + std::to_string(ent.size() / 2) + " tramos)";
+                }
                 continue;
             }
             ai_service_buses.push_back({id, di, now});
@@ -970,6 +981,13 @@
     // Herramientas > Buses IA (horario): the timetable buses under way on the whole map, Seguir / Conducir per bus
     auto ai_bus_list_window = [&]() {
         auto& stv = panel.imgui_state();
+        // (the 90 s limit of a bus picked in the list also from here: it held even if the timetable pass did not run)
+        if ((ai_pending_follow != static_cast<std::size_t>(-1) || ai_pending_drive != static_cast<std::size_t>(-1)) &&
+            glfwGetTime() - ai_pending_t0 > 95.0) {
+            panel.set_status("Bus IA: no se pudo colocar el bus: " + (ai_pending_why.empty() ? std::string("su zona no cargo") : ai_pending_why));
+            log::warn("ai traffic: list bus given up after 95 s (window): " + ai_pending_why);
+            ai_pending_follow = ai_pending_drive = static_cast<std::size_t>(-1);
+        }
         if (!stv.show_ai_bus_list) return;
         ImGui::SetNextWindowSize(ImVec2(520.f, 420.f), ImGuiCond_FirstUseEver);
         if (!ImGui::Begin("Buses IA (horario)##ai_bus_list", &stv.show_ai_bus_list)) {
@@ -1560,7 +1578,7 @@
             auto stuck_report = [&](const char* tag) {
                 const int nc = oo_traffic_car_count(ai_traffic);
                 int n_near = 0, standing = 0, stuck = 0;
-                int by_action[11]{};
+                int by_action[12]{};
                 std::string lines;
                 for (int i = 0; i < nc; ++i) {
                     std::uint64_t cid = 0;
@@ -1571,7 +1589,7 @@
                     ++n_near;
                     OoCarState cs{};
                     if (!oo_traffic_car_state(ai_traffic, cid, &cs)) continue;
-                    if (cs.action >= 0 && cs.action < 11) ++by_action[cs.action];
+                    if (cs.action >= 0 && cs.action < 12) ++by_action[cs.action];
                     if (cs.speed_kmh < 1.f) ++standing;
                     if (cs.stopped_s > 45.f) {
                         ++stuck;
@@ -1582,9 +1600,9 @@
                     }
                 }
                 std::string acts;
-                for (int a = 0; a < 11; ++a) acts += " " + std::to_string(by_action[a]);
+                for (int a = 0; a < 12; ++a) acts += " " + std::to_string(by_action[a]);
                 log::info(std::string("ai test: ") + tag + " cars within 150 m=" + std::to_string(n_near) + " standing=" +
-                          std::to_string(standing) + " stood>45s=" + std::to_string(stuck) + " actions[0..10]=" + acts + lines);
+                          std::to_string(standing) + " stood>45s=" + std::to_string(stuck) + " actions[0..11]=" + acts + lines);
             };
             if (s_step == 0 && t > 25.0 && !ai_traffic_light_objs.empty()) {
                 // the crossing with lights nearest the view

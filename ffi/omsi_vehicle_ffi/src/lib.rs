@@ -252,6 +252,65 @@ fn begin_startup(b: &mut OoBus) {
 
 mod traffic;
 
+/// The depot file (.hof) a bus of the folder `bus_dir` runs with on the map of `map_dir`: the one the map's ailists
+/// depot groups name, from the bus's own folder first, else anywhere (HOFs/, maps, vehicles); else the bus
+/// folder's depot file that belongs to the map by name (openOMSI `depot_like`, the map folder's name as the hint).
+pub(crate) fn find_depot(map_dir: &std::path::Path, bus_dir: &std::path::Path) -> Option<omsi_vehicle::Hof> {
+    let mut names: Vec<String> = Vec::new();
+    if let Ok(lists) = omsi_map::ailists::AiLists::load(&map_dir.join("ailists.cfg")) {
+        for g in &lists.groups {
+            if let Some(h) = &g.hof {
+                let h = h.trim();
+                let h = if h.to_ascii_lowercase().ends_with(".hof") { &h[..h.len() - 4] } else { h };
+                if !h.is_empty() && !names.iter().any(|n| n.eq_ignore_ascii_case(h)) {
+                    names.push(h.to_string());
+                }
+            }
+        }
+    }
+    let mut hof = names.iter().find_map(|n| omsi_vehicle::hof::depot_in(bus_dir, n));
+    if hof.is_none() {
+        hof = names.iter().find_map(|n| omsi_vehicle::hof::depot_anywhere(n));
+    }
+    if hof.is_none() {
+        let hint = map_dir.file_name().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        hof = omsi_vehicle::hof::depot_like(bus_dir, &[hint.as_str()]);
+    }
+    hof
+}
+
+/// The player's bus on the map of `map_dir`: its depot file (.hof - termini, codes, sign texts, as OMSI asks for
+/// one when a bus is put out) and a destination on its signs: `line` / `terminus` (a terminus' texture id) when
+/// given, else the depot's first real terminus, set as if the driver had typed it. Without a depot the IBIS had
+/// nothing to show and every sign stayed blank. Returns 1 when a depot file was found.
+#[unsafe(no_mangle)]
+pub extern "C" fn oo_bus_set_depot(bus: *mut OoBus, map_dir: *const c_char, line: *const c_char, terminus: *const c_char) -> i32 {
+    let Some(map_dir) = (unsafe { cstr(map_dir) }) else { return 0 };
+    let line = unsafe { cstr(line) }.unwrap_or("").to_string();
+    let terminus = unsafe { cstr(terminus) }.unwrap_or("").to_string();
+    with_bus(bus, 0, |b| {
+        let bus_dir = b.v.ty.def.path.parent().map(std::path::Path::to_path_buf).unwrap_or_default();
+        let Some(hof) = find_depot(std::path::Path::new(map_dir), &bus_dir) else {
+            say(1, &format!("player bus: no depot file (.hof) for {} on this map", bus_dir.display()));
+            return 0;
+        };
+        let hof = std::sync::Arc::new(hof);
+        b.v.host.hof = Some(hof.clone());
+        if let Some(k) = b.v.ty.program.str_var("Linie") {
+            if !line.is_empty() {
+                b.v.state.str_vars[k as usize] = line.clone();
+            }
+        }
+        if !terminus.is_empty() {
+            omsi_sim::timetable_run::set_ai_destination(&mut b.v, Some(&hof), &line, &terminus, &[]);
+        } else if let Some(ti) = hof.termini.iter().position(|t| !t.all_exit && !t.display_name().trim().is_empty()) {
+            omsi_sim::timetable_run::set_ai_destination_at(&mut b.v, &hof, &line, ti, &[]);
+        }
+        say(0, &format!("player bus: depot file with {} termini", hof.termini.len()));
+        1
+    })
+}
+
 /// Copy `s` into the C buffer (NUL-terminated, cut to fit); returns the length written.
 fn write_cstr(s: &str, buf: *mut c_char, cap: usize) -> usize {
     if buf.is_null() || cap == 0 {

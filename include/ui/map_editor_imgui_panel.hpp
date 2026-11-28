@@ -131,6 +131,10 @@ void float_slot_begin(const char* key, int order);
 void float_slot_end();
 // Once per frame (the panel build calls it): starts / draws the close animation of windows that went away.
 void float_layout_frame();
+// Left edge of the docked window column this frame (viewport right edge when none): bars at the bottom stop there.
+[[nodiscard]] float float_layout_column_left();
+// "Opciones del editor" > Sonido section, drawn by the app (world sound on/off, volume, counts).
+void set_options_sound_section(std::function<void()> draw);
 // tga path -> ImTextureID (0 = not ready). Thumbnails fall back to per-pixel draw while 0.
 void set_thumb_texture_provider(std::function<std::uint64_t(const std::filesystem::path&)> fn);
 // A texture file's small preview (decoded on a worker the first time it is asked for). id 0 while loading.

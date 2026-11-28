@@ -53,6 +53,9 @@
 
 namespace omsi::gfx::dx12 {
 namespace {
+// the editor-opacity ("fade") pass the recording thread is drawing the see-through chunks in: 0 none (the old
+// single blended pass), 1 their depth prepass, 2 their colour where that depth is (see the ghost list below)
+thread_local int t_fade_pass = 0;
 
 // [PERF] Threads of the render's own for its parallel parts (frustum cull, opaque-pass recording). On the
 // shared job pool they found every worker busy - streaming decode, or blocked on the disk's IO slots - and
@@ -1142,6 +1145,7 @@ void HelloO3dRenderer::populate_command_list() {
                                    !wireframe_pass && !invert_pass && !detail_pass;
             if (vehicle_core_pass && !veh_split) continue;
             float alpha_mode_override = -1.f;
+            bool fade_pso = false; // (both faces, as the prepass drew them: no culling variant)
             if (detail_pass && d.pipeline_state_terrain_bias) {
                 pso = d.pipeline_state_terrain_bias.Get();
             } else if (chunk.detail_ready && chunk.detail_active && !wireframe_pass && !invert_pass && !shadow_pass &&
@@ -1166,8 +1170,16 @@ void HelloO3dRenderer::populate_command_list() {
                                     chunk.render_phase == WorldRenderPhase::Surface ||
                                     chunk.render_phase == WorldRenderPhase::OnSurface || batch.is_on_surface ||
                                     chunk.decal;
-                pso = (ground && d.pipeline_state_ghost_surface) ? d.pipeline_state_ghost_surface.Get()
-                                                                 : d.pipeline_state_alpha_nozwrite.Get();
+                if (t_fade_pass != 0 && d.pipeline_state_fade_depth[0]) {
+                    // the fade: depth of the nearest ghost surface first, then only that surface's colour - a
+                    // concrete platform behind a ghosted bus no longer drew over the bus's lower half because it
+                    // came later in the order
+                    pso = (t_fade_pass == 1 ? d.pipeline_state_fade_depth : d.pipeline_state_fade_color)[ground ? 1 : 0].Get();
+                    fade_pso = true;
+                } else {
+                    pso = (ground && d.pipeline_state_ghost_surface) ? d.pipeline_state_ghost_surface.Get()
+                                                                     : d.pipeline_state_alpha_nozwrite.Get();
+                }
             } else if (batch.alpha_mode == MatlAlphaMode::alpha_blend && d.pipeline_state_ghost_surface &&
                        (chunk.render_phase == WorldRenderPhase::Spline || chunk_is_spline_merged ||
                         chunk_is_spline_name || chunk.surface_bias ||
@@ -1226,8 +1238,10 @@ void HelloO3dRenderer::populate_command_list() {
             } else if (veh_split) {
                 alpha_mode_override = 2.2f; // only the translucent texels (the core is drawn)
             }
-            pso = cull_content(pso, chunk, batch, wireframe_pass || invert_pass || shadow_pass);
-            pso = apply_double_sided(pso, batch);
+            if (!fade_pso) {
+                pso = cull_content(pso, chunk, batch, wireframe_pass || invert_pass || shadow_pass);
+                pso = apply_double_sided(pso, batch);
+            }
             if (t_rc->bc.pso != pso) {
                 t_rc->cl->SetPipelineState(pso);
                 t_rc->bc.pso = pso;
@@ -2198,12 +2212,19 @@ void HelloO3dRenderer::populate_command_list() {
             if (da != db) return da > db;
             return a < b; // the meshes of one object in the order of its file
         });
-        for (std::size_t i : lists.ghost) {
-            const auto& c = d.mesh_chunks[i];
-            if (!c.opaque_batches.empty()) draw_chunk_batches(c, c.opaque_batches, false);
-            if (!c.alpha_batches.empty()) draw_chunk_batches(c, c.alpha_batches, false);
-            if (!c.alpha_nozwrite_batches.empty()) draw_chunk_batches(c, c.alpha_nozwrite_batches, false);
+        // the fade: every ghost chunk's depth first, then their colour where that depth is - each pixel blends only
+        // the nearest see-through surface over the scene (before, blended without depth in far-to-near order, what
+        // came later drew over what stood in front of it). Opacity 1 never comes here: no extra cost.
+        for (int pass = 1; pass <= 2; ++pass) {
+            t_fade_pass = pass;
+            for (std::size_t i : lists.ghost) {
+                const auto& c = d.mesh_chunks[i];
+                if (!c.opaque_batches.empty()) draw_chunk_batches(c, c.opaque_batches, false);
+                if (!c.alpha_batches.empty()) draw_chunk_batches(c, c.alpha_batches, false);
+                if (!c.alpha_nozwrite_batches.empty()) draw_chunk_batches(c, c.alpha_nozwrite_batches, false);
+            }
         }
+        t_fade_pass = 0;
     }
     rec_lap(5, lists.shadow.size() + lists.wireframe.size() + lists.alpha_nozwrite.size() + lists.rails.size() +
                    lists.ghost.size());

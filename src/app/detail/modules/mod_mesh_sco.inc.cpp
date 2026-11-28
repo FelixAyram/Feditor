@@ -75,9 +75,13 @@
         std::vector<std::filesystem::path> tex_list;
         // Material slots: every face created while a slot is active goes into it; giving the slot a
         // texture retextures all of its triangles at once.
+        // Blender-like: every face is in exactly one slot (mesh_slots_normalize); the slot owns the face's
+        // texture and the OMSI material ([matl] diffuse / specular / emissive / power, [matl_alpha]).
         struct Slot {
             std::string name;
             int tex = -1; // tex_list index, -1 none yet
+            int alpha = 0; // [matl_alpha]: 0 opaque, 1 alpha test, 2 alpha blend
+            o3d::MaterialFixed fixed{{1.f, 1.f, 1.f, 1.f}, {0.f, 0.f, 0.f}, {0.f, 0.f, 0.f}, 10.f};
         };
         std::vector<Slot> slots;
         int active_slot = -1;
@@ -101,6 +105,13 @@
         std::vector<MeshVert> src_verts;
         std::vector<MeshEdge> src_edges;
         std::vector<MeshFace> src_tris;
+        // per source vertex: its uv (2 floats); per source triangle: its texture (src_tex index, -1 none)
+        std::vector<float> src_uv;
+        std::vector<int> src_tri_tex;
+        std::vector<std::filesystem::path> src_tex;
+        std::vector<std::uint8_t> src_tex_alpha;
+        int tex_browse_slot = -1; // "Buscar..." of a slot: the texture picked in the browser goes to it
+        int tex_browse_sel0 = -1;
         int src_kind = 0;
         std::int32_t src_id = 0;
         float src_px = 0.f, src_py = 0.f, src_pz = 0.f, src_len = 0.f;
@@ -265,6 +276,42 @@
         if (mat >= 0 && static_cast<std::size_t>(mat) < mesh_edit.tex_list.size())
             return mesh_edit.tex_list[static_cast<std::size_t>(mat)];
         return {};
+    };
+    // a texture's tex_list index (added for this session when new; f4_mesh_textures.cfg is not touched)
+    auto mesh_tex_index_for = [&](const std::filesystem::path& p) -> int {
+        if (p.empty()) return -1;
+        const auto n = p.lexically_normal();
+        for (int i = 0; i < static_cast<int>(mesh_edit.tex_list.size()); ++i)
+            if (mesh_edit.tex_list[static_cast<std::size_t>(i)].lexically_normal() == n) return i;
+        mesh_edit.tex_list.push_back(n);
+        return static_cast<int>(mesh_edit.tex_list.size()) - 1;
+    };
+    // the slot holding texture `tex` (created, named after the texture, when there is none)
+    auto mesh_slot_for_tex = [&](int tex, int alpha) -> int {
+        for (int i = 0; i < static_cast<int>(mesh_edit.slots.size()); ++i)
+            if (mesh_edit.slots[static_cast<std::size_t>(i)].tex == tex) return i;
+        MeshEdit::Slot sl{};
+        sl.tex = tex;
+        sl.alpha = alpha;
+        sl.name = (tex >= 0 && static_cast<std::size_t>(tex) < mesh_edit.tex_list.size())
+                      ? mesh_edit.tex_list[static_cast<std::size_t>(tex)].filename().string()
+                      : std::string("Sin textura");
+        mesh_edit.slots.push_back(sl);
+        return static_cast<int>(mesh_edit.slots.size()) - 1;
+    };
+    // One slot per face, the slot decides the texture: faces without a (valid) slot go to the slot of their
+    // texture; a slot without a texture takes its first face's. (Undo snapshots keep faces, not slots: this
+    // also repairs slot indices a restored face may carry.)
+    auto mesh_slots_normalize = [&]() {
+        for (auto& f : mesh_edit.faces) {
+            if (f.mat >= 0 && static_cast<std::size_t>(f.mat) >= mesh_edit.tex_list.size()) f.mat = -1;
+            if (f.slot < 0 || static_cast<std::size_t>(f.slot) >= mesh_edit.slots.size())
+                f.slot = mesh_slot_for_tex(f.mat, 0);
+            auto& sl = mesh_edit.slots[static_cast<std::size_t>(f.slot)];
+            if (sl.tex >= 0 && static_cast<std::size_t>(sl.tex) < mesh_edit.tex_list.size()) f.mat = sl.tex;
+            else if (f.mat >= 0) sl.tex = f.mat;
+        }
+        if (mesh_edit.active_slot >= static_cast<int>(mesh_edit.slots.size())) mesh_edit.active_slot = -1;
     };
     auto mesh_is_own_chunk = [&](std::size_t c) {
         if (c == mesh_edit.preview_chunk || c == mesh_edit.sel_overlay_chunk || c == mesh_edit.edge_overlay_chunk)
@@ -526,12 +573,26 @@
         mesh_edit.src_kind = 0;
         mesh_edit.src_id = 0;
         mesh_edit.src_hover_v = mesh_edit.src_hover_e = mesh_edit.src_hover_f = -1;
+        mesh_edit.src_uv.clear();
+        mesh_edit.src_tri_tex.clear();
+        mesh_edit.src_tex.clear();
+        mesh_edit.src_tex_alpha.clear();
     };
 
-    auto mesh_src_push_world = [&](const XMMATRIX& wm, float x, float y, float z) {
+    auto mesh_src_push_world = [&](const XMMATRIX& wm, float x, float y, float z, float u = 0.f, float v = 0.f) {
         DirectX::XMFLOAT3 w{};
         DirectX::XMStoreFloat3(&w, xform_point(wm, x, y, z));
         mesh_edit.src_verts.push_back(MeshVert{w.x, w.y, w.z});
+        mesh_edit.src_uv.push_back(u);
+        mesh_edit.src_uv.push_back(v);
+    };
+    auto mesh_src_tex_id = [&](const std::filesystem::path& p, std::uint8_t alpha) -> int {
+        if (p.empty()) return -1;
+        for (int i = 0; i < static_cast<int>(mesh_edit.src_tex.size()); ++i)
+            if (mesh_edit.src_tex[static_cast<std::size_t>(i)] == p) return i;
+        mesh_edit.src_tex.push_back(p);
+        mesh_edit.src_tex_alpha.push_back(alpha);
+        return static_cast<int>(mesh_edit.src_tex.size()) - 1;
     };
 
     auto mesh_src_fill_object = [&](std::int32_t oid) {
@@ -568,7 +629,7 @@
             if (!seen.insert(k).second) return;
             mesh_edit.src_edges.push_back(MeshEdge{a, b});
         };
-        auto add_tri_i = [&](int a, int b, int c) {
+        auto add_tri_i = [&](int a, int b, int c, int tex) {
             if (a < 0 || b < 0 || c < 0 || a == b || b == c || a == c) return;
             if (static_cast<int>(mesh_edit.src_tris.size()) >= kMax) return;
             MeshFace t{};
@@ -576,46 +637,79 @@
             t.i1 = b;
             t.i2 = c;
             mesh_edit.src_tris.push_back(t);
+            mesh_edit.src_tri_tex.push_back(tex);
         };
+        // Only the most detailed [LOD] band: every band lay over the others and a click took a vertex of a
+        // far band (the wrong part of the object moved / turned into mesh).
+        int best_lod = 1 << 30;
         for (const auto& ref : sco->meshes) {
+            const auto st = ref.mesh_file.stem().string();
+            if (st == "empty_lod" || st == "empty") continue;
+            best_lod = (std::min)(best_lod, ref.lod_index);
+        }
+        // The world matrix the scene draws this mesh with (spline-attach / ground-layer Z included); the
+        // matrix rebuilt here from the .map only is the fallback.
+        auto drawn_world = [&](int mesh_idx, XMMATRIX& out) -> bool {
+            for (const auto& sp : scene_places)
+                if (sp.alive && sp.object_id == oid && sp.sco_mesh_index == mesh_idx && sp.has_base_world) {
+                    out = DirectX::XMLoadFloat4x4(&sp.base_world);
+                    return true;
+                }
+            return false;
+        };
+        for (std::size_t mesh_i = 0; mesh_i < sco->meshes.size(); ++mesh_i) {
+            const auto& ref = sco->meshes[mesh_i];
             if (static_cast<int>(mesh_edit.src_verts.size()) >= kMax) break;
             const auto stem = ref.mesh_file.stem().string();
             if (stem == "empty_lod" || stem == "empty") continue;
+            if (ref.lod_index != best_lod) continue;
             if (ref.is_o3d) {
                 auto mapped = o3d::load_mapped_shared(ref.mesh_file);
                 if (!mapped || !mapped->valid()) continue;
                 std::vector<o3d::Vertex> gv;
                 o3d::prepare_o3d_mesh_vertices_for_gpu(mapped->mesh(), gv);
-                const XMMATRIX wm =
-                    ma4_to_xm(o3d::o3d_unity_root_transform(mapped->mesh().object_rows())) * base;
+                XMMATRIX wm = ma4_to_xm(o3d::o3d_unity_root_transform(mapped->mesh().object_rows())) * base;
+                (void)drawn_world(static_cast<int>(mesh_i), wm);
+                // its materials' textures (per triangle)
+                std::vector<int> mat_tex;
+                for (const auto& m : mapped->mesh().parse_materials()) {
+                    std::filesystem::path tp;
+                    if (!m.texture.empty())
+                        if (const auto r = gfx::dx12::resolve_texture_path(ref.mesh_file, m.texture, cfg.omsi_root)) tp = *r;
+                    mat_tex.push_back(mesh_src_tex_id(tp, 0));
+                }
                 const int base_i = static_cast<int>(mesh_edit.src_verts.size());
                 for (const auto& v : gv) {
                     if (static_cast<int>(mesh_edit.src_verts.size()) >= kMax) break;
-                    mesh_src_push_world(wm, v.position[0], v.position[1], v.position[2]);
+                    mesh_src_push_world(wm, v.position[0], v.position[1], v.position[2], v.uv[0], v.uv[1]);
                 }
                 const int nv = static_cast<int>(mesh_edit.src_verts.size()) - base_i;
-                auto emit = [&](int i0, int i1, int i2) {
+                auto emit = [&](int i0, int i1, int i2, int m) {
                     if (i0 < 0 || i1 < 0 || i2 < 0 || i0 >= nv || i1 >= nv || i2 >= nv) return;
                     add_edge_i(base_i + i0, base_i + i1);
                     add_edge_i(base_i + i1, base_i + i2);
                     add_edge_i(base_i + i2, base_i + i0);
-                    add_tri_i(base_i + i0, base_i + i1, base_i + i2);
+                    add_tri_i(base_i + i0, base_i + i1, base_i + i2,
+                              (m >= 0 && static_cast<std::size_t>(m) < mat_tex.size()) ? mat_tex[static_cast<std::size_t>(m)] : -1);
                 };
                 if (mapped->mesh().long_triangle_indices) {
                     for (const auto& t : mapped->mesh().triangle_u32_span())
-                        emit(static_cast<int>(t.i0), static_cast<int>(t.i1), static_cast<int>(t.i2));
+                        emit(static_cast<int>(t.i0), static_cast<int>(t.i1), static_cast<int>(t.i2), static_cast<int>(t.material));
                 } else {
                     for (const auto& t : mapped->mesh().triangle_u16_span())
-                        emit(static_cast<int>(t.i0), static_cast<int>(t.i1), static_cast<int>(t.i2));
+                        emit(static_cast<int>(t.i0), static_cast<int>(t.i1), static_cast<int>(t.i2), static_cast<int>(t.material));
                 }
             } else if (!sco->tree.valid) {
                 const auto xf = xfile::load_x_file(ref.mesh_file);
                 if (!xf) continue;
+                XMMATRIX wm = base;
+                (void)drawn_world(static_cast<int>(mesh_i), wm);
                 for (const auto& xm : xf->parts) {
+                    const int tex = mesh_src_tex_id(resolve_x_tex(ref.mesh_file, obj->sco_path, xm.texture_filename), 0);
                     const int base_i = static_cast<int>(mesh_edit.src_verts.size());
                     for (const auto& v : xm.vertices) {
                         if (static_cast<int>(mesh_edit.src_verts.size()) >= kMax) break;
-                        mesh_src_push_world(base, v.position[0], v.position[1], v.position[2]);
+                        mesh_src_push_world(wm, v.position[0], v.position[1], v.position[2], v.uv[0], v.uv[1]);
                     }
                     const int nv = static_cast<int>(mesh_edit.src_verts.size()) - base_i;
                     for (std::size_t ii = 0; ii + 2 < xm.indices.size(); ii += 3) {
@@ -626,7 +720,7 @@
                         add_edge_i(base_i + i0, base_i + i1);
                         add_edge_i(base_i + i1, base_i + i2);
                         add_edge_i(base_i + i2, base_i + i0);
-                        add_tri_i(base_i + i0, base_i + i1, base_i + i2);
+                        add_tri_i(base_i + i0, base_i + i1, base_i + i2, tex);
                     }
                 }
             }
@@ -692,7 +786,7 @@
             if (!seen_e.insert(k).second) return;
             mesh_edit.src_edges.push_back(MeshEdge{a, b});
         };
-        auto add_tri_i = [&](int a, int b, int c) {
+        auto add_tri_i = [&](int a, int b, int c, int tex) {
             if (a < 0 || b < 0 || c < 0 || a == b || b == c || a == c) return;
             if (static_cast<int>(mesh_edit.src_tris.size()) >= kMax) return;
             MeshFace t{};
@@ -700,6 +794,7 @@
             t.i1 = b;
             t.i2 = c;
             mesh_edit.src_tris.push_back(t);
+            mesh_edit.src_tri_tex.push_back(tex);
         };
         bool capped = false;
         for (std::int32_t cid : chain) {
@@ -712,6 +807,7 @@
             const auto meshes = spline::build_spline_meshes(*sp, *def, cfg.omsi_root, 0.f, chain_z);
             for (const auto& m : meshes) {
                 const int base_i = static_cast<int>(mesh_edit.src_verts.size());
+                const int tex = mesh_src_tex_id(m.texture_path, m.alpha_mode);
                 for (const auto& v : m.vertices) {
                     if (static_cast<int>(mesh_edit.src_verts.size()) >= kMax) {
                         capped = true;
@@ -724,6 +820,8 @@
                     mv.src_kind = 2;
                     mv.src_id = cid;
                     mesh_edit.src_verts.push_back(mv);
+                    mesh_edit.src_uv.push_back(v.uv[0]);
+                    mesh_edit.src_uv.push_back(v.uv[1]);
                 }
                 const int nv = static_cast<int>(mesh_edit.src_verts.size()) - base_i;
                 for (std::size_t ii = 0; ii + 2 < m.indices.size(); ii += 3) {
@@ -734,7 +832,7 @@
                     add_edge_i(base_i + i0, base_i + i1);
                     add_edge_i(base_i + i1, base_i + i2);
                     add_edge_i(base_i + i2, base_i + i0);
-                    add_tri_i(base_i + i0, base_i + i1, base_i + i2);
+                    add_tri_i(base_i + i0, base_i + i1, base_i + i2, tex);
                 }
                 if (static_cast<int>(mesh_edit.src_verts.size()) >= kMax ||
                     static_cast<int>(mesh_edit.src_tris.size()) >= kMax) {
@@ -994,6 +1092,7 @@
     };
 
     auto mesh_refresh_preview = [&]() {
+        mesh_slots_normalize();
         auto hide_chunk = [&](std::size_t c) {
             if (c != static_cast<std::size_t>(-1)) renderer.set_chunk_visible(c, false);
         };
@@ -1182,10 +1281,16 @@
             return;
         }
         mesh_geo_cap();
+        // the selection moves to the slot of that texture (one slot per face, no loose textures)
+        const int si = mesh_slot_for_tex(mat, 0);
         for (int fi : mesh_edit.sel_faces) {
-            if (fi >= 0 && static_cast<std::size_t>(fi) < mesh_edit.faces.size())
-                mesh_edit.faces[static_cast<std::size_t>(fi)].mat = mat;
+            if (fi >= 0 && static_cast<std::size_t>(fi) < mesh_edit.faces.size()) {
+                auto& f = mesh_edit.faces[static_cast<std::size_t>(fi)];
+                f.mat = mat;
+                f.slot = si;
+            }
         }
+        mesh_edit.dirty = true;
         mesh_refresh_preview();
     };
 
@@ -1758,12 +1863,18 @@
             if (ans != IDYES) return;
         }
         o3d::WritableMesh mesh;
-        const int nmat = (std::max)(1, static_cast<int>(mesh_edit.tex_list.size()));
-        for (int mi = 0; mi < nmat; ++mi) {
+        mesh_slots_normalize();
+        // one material per slot that has faces (it used to write the whole texture list, used or not)
+        std::vector<int> slot_out(mesh_edit.slots.size(), -1);
+        std::vector<std::pair<std::string, int>> matl_alpha; // texture, mode (for the .sco)
+        for (int si = 0; si < static_cast<int>(mesh_edit.slots.size()); ++si) {
+            bool used = false;
+            for (const auto& f : mesh_edit.faces) used = used || f.slot == si;
+            if (!used) continue;
+            const auto& sl = mesh_edit.slots[static_cast<std::size_t>(si)];
             o3d::Material mat{};
-            mat.fixed.diffuse[0] = mat.fixed.diffuse[1] = mat.fixed.diffuse[2] = mat.fixed.diffuse[3] = 1.f;
-            mat.fixed.power = 10.f;
-            const auto tex = mesh_tex_path_at(mi);
+            mat.fixed = sl.fixed;
+            const auto tex = mesh_tex_path_at(sl.tex);
             std::string tex_ref = "white.bmp";
             if (!tex.empty()) {
                 tex_ref = tex.filename().string();
@@ -1771,8 +1882,18 @@
                                            std::filesystem::copy_options::overwrite_existing, ec);
             }
             mat.texture = tex_ref;
+            slot_out[static_cast<std::size_t>(si)] = static_cast<int>(mesh.materials.size());
+            if (sl.alpha > 0) matl_alpha.emplace_back(tex_ref, sl.alpha);
             mesh.materials.push_back(mat);
         }
+        if (mesh.materials.empty()) {
+            o3d::Material mat{};
+            mat.fixed.diffuse[0] = mat.fixed.diffuse[1] = mat.fixed.diffuse[2] = mat.fixed.diffuse[3] = 1.f;
+            mat.fixed.power = 10.f;
+            mat.texture = "white.bmp";
+            mesh.materials.push_back(mat);
+        }
+        const int nmat = static_cast<int>(mesh.materials.size());
         float cx = 0.f, cy = 0.f, cz = 0.f;
         int nv = 0;
         for (const auto& v : mesh_edit.verts) {
@@ -1835,15 +1956,23 @@
             t.i0 = base;
             t.i1 = base + 1;
             t.i2 = base + 2;
-            t.material = static_cast<std::uint16_t>((f.mat >= 0 && f.mat < nmat) ? f.mat : 0);
+            const int om = (f.slot >= 0 && static_cast<std::size_t>(f.slot) < slot_out.size())
+                               ? slot_out[static_cast<std::size_t>(f.slot)]
+                               : 0;
+            t.material = static_cast<std::uint16_t>((om >= 0 && om < nmat) ? om : 0);
             mesh.triangles.push_back(t);
         }
+        std::stable_sort(mesh.triangles.begin(), mesh.triangles.end(),
+                         [](const o3d::TriangleU32& x, const o3d::TriangleU32& y) { return x.material < y.material; });
         if (!o3d::write_o3d_file(o3d_path, mesh)) {
             panel.set_status("Bake .sco: no se pudo escribir o3d");
             return;
         }
         std::ofstream sco(sco_path);
-        sco << "[friendlyname]\n" << stem << "\n\n[mesh]\nmodel\\" << stem << ".o3d\n\n[absheight]\n";
+        sco << "[friendlyname]\n" << stem << "\n\n[mesh]\nmodel\\" << stem << ".o3d\n";
+        for (const auto& [tex_ref, mode] : matl_alpha) // the slots' alpha ([matl] texture / index, [matl_alpha])
+            sco << "\n[matl]\n" << tex_ref << "\n0\n\n[matl_alpha]\n" << mode << "\n";
+        sco << "\n[absheight]\n";
         sco.close();
         push_undo("mesh_bake_sco");
         map::MapObjectInst o{};
@@ -1959,45 +2088,49 @@
             MeshEdit::Slot sl{};
             sl.name = mats[mi].texture.empty() ? ("Material " + std::to_string(mi)) : std::string(mats[mi].texture);
             sl.tex = mat_to_tex[mi];
+            sl.fixed = mats[mi].fixed; // diffuse / specular / emissive / power kept on save
             mesh_edit.slots.push_back(sl);
         }
-        std::unordered_map<std::uint64_t, int> grid;
+        // Corners are welded by position (uv seams of one surface become one vertex) but only within one
+        // material: welded across materials, parts that merely touch (glass in its frame, separate pieces)
+        // shared vertices and a move dragged the other part along.
+        std::vector<DirectX::XMFLOAT3> wpos(gv.size());
+        for (std::size_t i = 0; i < gv.size(); ++i)
+            DirectX::XMStoreFloat3(&wpos[i], xform_point(wm, gv[i].position[0], gv[i].position[1], gv[i].position[2]));
+        std::unordered_map<std::uint64_t, std::vector<std::pair<int, std::uint16_t>>> grid; // key -> (vert, material)
         grid.reserve(gv.size() * 2);
-        std::vector<int> remap(gv.size(), -1);
-        for (std::size_t i = 0; i < gv.size(); ++i) {
-            DirectX::XMFLOAT3 w{};
-            DirectX::XMStoreFloat3(&w, xform_point(wm, gv[i].position[0], gv[i].position[1], gv[i].position[2]));
+        auto corner_of = [&](std::uint32_t gi, std::uint16_t m) -> int {
+            const auto& w = wpos[gi];
             const auto qx = static_cast<std::int64_t>(std::llround(w.x * 1000.0));
             const auto qy = static_cast<std::int64_t>(std::llround(w.y * 1000.0));
             const auto qz = static_cast<std::int64_t>(std::llround(w.z * 1000.0));
             const std::uint64_t key = (static_cast<std::uint64_t>(qx) * 73856093ull) ^
                                       (static_cast<std::uint64_t>(qy) * 19349663ull) ^
                                       (static_cast<std::uint64_t>(qz) * 83492791ull);
-            auto it = grid.find(key);
-            if (it != grid.end()) {
-                const auto& e = mesh_edit.verts[static_cast<std::size_t>(it->second)];
-                if (std::fabs(e.x - (w.x + mesh_edit.o3d_ox)) < 1e-3f &&
-                    std::fabs(e.y - (w.y + mesh_edit.o3d_oy)) < 1e-3f &&
-                    std::fabs(e.z - (w.z + mesh_edit.o3d_oz)) < 1e-3f) {
-                    remap[i] = it->second;
-                    continue;
-                }
+            auto& bucket = grid[key];
+            for (const auto& [vi, vm] : bucket) {
+                if (vm != m) continue;
+                const auto& e = mesh_edit.verts[static_cast<std::size_t>(vi)];
+                if (std::fabs(e.x - (w.x + mesh_edit.o3d_ox)) < 1e-3f && std::fabs(e.y - (w.y + mesh_edit.o3d_oy)) < 1e-3f &&
+                    std::fabs(e.z - (w.z + mesh_edit.o3d_oz)) < 1e-3f)
+                    return vi;
             }
             MeshVert v{};
             v.x = w.x + mesh_edit.o3d_ox;
             v.y = w.y + mesh_edit.o3d_oy;
             v.z = w.z + mesh_edit.o3d_oz;
-            remap[i] = static_cast<int>(mesh_edit.verts.size());
-            grid[key] = remap[i];
+            const int vi = static_cast<int>(mesh_edit.verts.size());
             mesh_edit.verts.push_back(v);
-        }
+            bucket.emplace_back(vi, m);
+            return vi;
+        };
         std::unordered_set<std::uint64_t> seen_e;
         auto add_face = [&](std::uint32_t a, std::uint32_t b, std::uint32_t c, std::uint16_t m) {
             if (a >= gv.size() || b >= gv.size() || c >= gv.size()) return;
             MeshFace f{};
-            f.i0 = remap[a];
-            f.i1 = remap[b];
-            f.i2 = remap[c];
+            f.i0 = corner_of(a, m);
+            f.i1 = corner_of(b, m);
+            f.i2 = corner_of(c, m);
             if (f.i0 == f.i1 || f.i1 == f.i2 || f.i0 == f.i2) return;
             f.mat = m < mat_to_tex.size() ? mat_to_tex[m] : -1;
             f.slot = m < mat_to_tex.size() ? static_cast<int>(m) : -1;
@@ -2032,24 +2165,33 @@
     auto mesh_save_o3d = [&]() {
         if (mesh_edit.o3d_edit_path.empty() || mesh_edit.faces.empty() || view_only) return;
         const auto path = mesh_edit.o3d_edit_path;
+        mesh_slots_normalize();
         o3d::WritableMesh out;
+        // one .o3d material per slot that has faces, in slot order (its [matl] values, its texture)
         std::unordered_map<int, std::uint16_t> out_mat;
-        auto mat_for = [&](int ti) -> std::uint16_t {
-            if (const auto it = out_mat.find(ti); it != out_mat.end()) return it->second;
+        auto mat_for = [&](int si) -> std::uint16_t {
+            if (const auto it = out_mat.find(si); it != out_mat.end()) return it->second;
             o3d::Material m{};
-            if (const auto it = mesh_edit.o3d_mats.find(ti); it != mesh_edit.o3d_mats.end()) {
-                m = it->second;
-            } else {
-                m.fixed.diffuse[0] = m.fixed.diffuse[1] = m.fixed.diffuse[2] = m.fixed.diffuse[3] = 1.f;
-                m.fixed.power = 10.f;
+            m.fixed.diffuse[0] = m.fixed.diffuse[1] = m.fixed.diffuse[2] = m.fixed.diffuse[3] = 1.f;
+            m.fixed.power = 10.f;
+            int ti = -1;
+            if (si >= 0 && static_cast<std::size_t>(si) < mesh_edit.slots.size()) {
+                m.fixed = mesh_edit.slots[static_cast<std::size_t>(si)].fixed;
+                ti = mesh_edit.slots[static_cast<std::size_t>(si)].tex;
             }
             const auto tex = mesh_tex_path_at(ti);
             if (!tex.empty()) m.texture = tex.filename().string();
             const auto idx = static_cast<std::uint16_t>(out.materials.size());
             out.materials.push_back(m);
-            out_mat[ti] = idx;
+            out_mat[si] = idx;
             return idx;
         };
+        for (int si = 0; si < static_cast<int>(mesh_edit.slots.size()); ++si)
+            for (const auto& f : mesh_edit.faces)
+                if (f.slot == si) {
+                    (void)mat_for(si);
+                    break;
+                }
         const std::size_t nf = mesh_edit.faces.size();
         std::vector<DirectX::XMFLOAT3> fnrm(nf);
         std::vector<std::vector<int>> vfaces(mesh_edit.verts.size());
@@ -2126,9 +2268,12 @@
             t.i0 = corner[0];
             t.i1 = corner[1];
             t.i2 = corner[2];
-            t.material = mat_for(f.mat);
+            t.material = mat_for(f.slot);
             out.triangles.push_back(t);
         }
+        // triangles grouped by material (slot), as OMSI's exporters write them
+        std::stable_sort(out.triangles.begin(), out.triangles.end(),
+                         [](const o3d::TriangleU32& x, const o3d::TriangleU32& y) { return x.material < y.material; });
         std::error_code ec;
         auto tmp = path;
         tmp += ".new";
@@ -2403,18 +2548,52 @@
         const auto& a = mesh_edit.src_verts[static_cast<std::size_t>(t.i0)];
         const auto& b = mesh_edit.src_verts[static_cast<std::size_t>(t.i1)];
         const auto& c = mesh_edit.src_verts[static_cast<std::size_t>(t.i2)];
-        const int f0 = mesh_find_xyz(a.x, a.y, a.z);
-        const int f1 = mesh_find_xyz(b.x, b.y, b.z);
-        const int f2 = mesh_find_xyz(c.x, c.y, c.z);
+        // A source triangle becomes a mesh face with ITS OWN corners, uv and texture. It used to weld each
+        // corner to any mesh vertex within the weld distance (2 cm) - a vertex of another object / surface -
+        // and to take the active texture with cube uv: touching a .sco / .sli turned it into the wrong part.
+        // Corners are shared only with the same source at the same spot (its own neighbouring triangles).
+        auto src_of = [&](const MeshVert& p, int& sk, std::int32_t& sid) {
+            sk = p.src_kind != 0 ? p.src_kind : mesh_edit.src_kind;
+            sid = p.src_kind != 0 ? p.src_id : mesh_edit.src_id;
+        };
+        auto find_exact = [&](const MeshVert& p) -> int {
+            int sk = 0;
+            std::int32_t sid = 0;
+            src_of(p, sk, sid);
+            for (int i = 0; i < static_cast<int>(mesh_edit.verts.size()); ++i) {
+                const auto& v = mesh_edit.verts[static_cast<std::size_t>(i)];
+                if (v.src_kind != sk || v.src_id != sid) continue;
+                const float dx = v.x - p.x, dy = v.y - p.y, dz = v.z - p.z;
+                if (dx * dx + dy * dy + dz * dz <= 1e-8f) return i;
+            }
+            return -1;
+        };
+        auto intern_exact = [&](const MeshVert& p) -> int {
+            if (const int i = find_exact(p); i >= 0) return i;
+            int sk = 0;
+            std::int32_t sid = 0;
+            src_of(p, sk, sid);
+            MeshVert nv{};
+            nv.x = p.x;
+            nv.y = p.y;
+            nv.z = p.z;
+            nv.src_kind = sk;
+            nv.src_id = sid;
+            mesh_edit.verts.push_back(nv);
+            return static_cast<int>(mesh_edit.verts.size()) - 1;
+        };
+        const int f0 = find_exact(a);
+        const int f1 = find_exact(b);
+        const int f2 = find_exact(c);
         if (f0 >= 0 && f1 >= 0 && f2 >= 0) {
             for (int i = 0; i < static_cast<int>(mesh_edit.faces.size()); ++i) {
                 if (mesh_face_same_verts(mesh_edit.faces[static_cast<std::size_t>(i)], f0, f1, f2)) return i;
             }
         }
         mesh_geo_cap();
-        const int i0 = mesh_intern_xyz(a.x, a.y, a.z, mesh_edit.src_kind, mesh_edit.src_id);
-        const int i1 = mesh_intern_xyz(b.x, b.y, b.z, mesh_edit.src_kind, mesh_edit.src_id);
-        const int i2 = mesh_intern_xyz(c.x, c.y, c.z, mesh_edit.src_kind, mesh_edit.src_id);
+        const int i0 = intern_exact(a);
+        const int i1 = intern_exact(b);
+        const int i2 = intern_exact(c);
         if (i0 < 0 || i1 < 0 || i2 < 0 || i0 == i1 || i1 == i2 || i0 == i2) {
             if (!mesh_edit.geo_undo.empty()) mesh_edit.geo_undo.pop_back();
             return -1;
@@ -2425,7 +2604,32 @@
         for (int i = 0; i < static_cast<int>(mesh_edit.faces.size()); ++i) {
             if (mesh_face_same_verts(mesh_edit.faces[static_cast<std::size_t>(i)], i0, i1, i2)) return i;
         }
-        mesh_edit.faces.push_back(mesh_new_face(i0, i1, i2, mesh_edit.tex_sel));
+        const int stex = (static_cast<std::size_t>(si) < mesh_edit.src_tri_tex.size())
+                             ? mesh_edit.src_tri_tex[static_cast<std::size_t>(si)]
+                             : -1;
+        if (stex >= 0 && static_cast<std::size_t>(stex) < mesh_edit.src_tex.size()) {
+            // its own texture -> the slot of that texture, its own uv
+            MeshFace f{};
+            f.i0 = i0;
+            f.i1 = i1;
+            f.i2 = i2;
+            f.mat = mesh_tex_index_for(mesh_edit.src_tex[static_cast<std::size_t>(stex)]);
+            const int alpha = static_cast<std::size_t>(stex) < mesh_edit.src_tex_alpha.size()
+                                  ? mesh_edit.src_tex_alpha[static_cast<std::size_t>(stex)]
+                                  : 0;
+            f.slot = mesh_slot_for_tex(f.mat, alpha);
+            auto uv_of = [&](int vi, float& u, float& v) {
+                const std::size_t k = static_cast<std::size_t>(vi) * 2;
+                u = k + 1 < mesh_edit.src_uv.size() ? mesh_edit.src_uv[k] : 0.f;
+                v = k + 1 < mesh_edit.src_uv.size() ? mesh_edit.src_uv[k + 1] : 0.f;
+            };
+            uv_of(t.i0, f.u0, f.v0);
+            uv_of(t.i1, f.u1, f.v1);
+            uv_of(t.i2, f.u2, f.v2);
+            mesh_edit.faces.push_back(f);
+        } else {
+            mesh_edit.faces.push_back(mesh_new_face(i0, i1, i2, mesh_edit.tex_sel));
+        }
         mesh_edit.dirty = true;
         mesh_refresh_preview();
         return static_cast<int>(mesh_edit.faces.size()) - 1;
@@ -2572,13 +2776,31 @@
     auto mesh_slot_delete = [&](int si) {
         if (!mesh_slot_valid(si)) return;
         mesh_geo_cap();
+        // as Blender: its faces go to the slot before it (the next one when it is the first), and take that
+        // slot's texture; the last slot left cannot go while it has faces
+        const int to = si > 0 ? si - 1 : (mesh_edit.slots.size() > 1 ? 1 : -1);
+        if (to < 0) {
+            for (const auto& f : mesh_edit.faces)
+                if (f.slot == si) {
+                    panel.set_status("El unico slot tiene caras: no se borra");
+                    return;
+                }
+        }
         for (auto& f : mesh_edit.faces) {
-            if (f.slot == si) f.slot = -1;
-            else if (f.slot > si) --f.slot;
+            if (f.slot == si) f.slot = to;
+            if (f.slot > si) --f.slot;
         }
         mesh_edit.slots.erase(mesh_edit.slots.begin() + si);
-        if (mesh_edit.active_slot == si) mesh_edit.active_slot = -1;
-        else if (mesh_edit.active_slot > si) --mesh_edit.active_slot;
+        if (mesh_edit.active_slot >= static_cast<int>(mesh_edit.slots.size())) mesh_edit.active_slot = static_cast<int>(mesh_edit.slots.size()) - 1;
+        mesh_edit.dirty = true;
+        mesh_refresh_preview();
+    };
+    auto mesh_slot_deselect = [&](int si) {
+        if (!mesh_slot_valid(si)) return;
+        mesh_sel_cap();
+        for (int fi = 0; fi < static_cast<int>(mesh_edit.faces.size()); ++fi)
+            if (mesh_edit.faces[static_cast<std::size_t>(fi)].slot == si) mesh_edit.sel_faces.erase(fi);
+        mesh_uv_sync_from_3d();
     };
     auto mesh_uv_sync_to_3d = [&]() {
         if (mesh_edit.pick == MeshEdit::Pick::Faces) {
@@ -5758,6 +5980,8 @@
     };
     auto mesh_clear_buffer = [&]() {
         mesh_edit.verts.clear();
+        mesh_edit.slots.clear(); // (no faces left: no material slots)
+        mesh_edit.active_slot = -1;
         mesh_edit.edges.clear();
         mesh_edit.faces.clear();
         mesh_edit.sel_verts.clear();
@@ -7636,65 +7860,131 @@
                 if (ImGui::Button(omsi::ui::i18n::tr_lit("Recalc normales"), ImVec2(wf3, 0.f))) mesh_recalc_n();
                 tip("Shift+N: normales hacia afuera");
 
-                ImGui::SeparatorText("Slots de material");
+                // Materials as in Blender: the slot list (texture thumbnail, name, faces), + / - on its side,
+                // Asignar / Seleccionar / Deseleccionar under it, and the chosen slot's material below. Every face
+                // is in exactly one slot (mesh_slots_normalize) and takes the slot's texture.
+                ImGui::SeparatorText("Materiales");
                 {
-                    const float ws2 = bw(2);
-                    if (ImGui::Button("+ Nuevo slot", ImVec2(ws2, 0.f))) mesh_slot_add();
-                    tip("Crea un slot y lo activa: cada cara que crees se guarda en el slot activo.\n"
-                        "Despues, al darle una textura al slot, se aplica a todos sus triangulos.");
-                    ImGui::SameLine();
-                    if (toggle_btn("Sin slot", mesh_edit.active_slot < 0, ws2)) mesh_edit.active_slot = -1;
-                    tip("Las caras nuevas no van a ningun slot");
+                    mesh_slots_normalize();
+                    // a texture picked with "Buscar..." of a slot goes to that slot
+                    if (mesh_edit.tex_browse_slot >= 0 && !mesh_edit.tex_browser_open) {
+                        if (mesh_edit.tex_sel != mesh_edit.tex_browse_sel0 && mesh_slot_valid(mesh_edit.tex_browse_slot))
+                            mesh_slot_set_tex(mesh_edit.tex_browse_slot, mesh_edit.tex_sel);
+                        mesh_edit.tex_browse_slot = -1;
+                    }
+                    if (mesh_edit.active_slot < 0 && !mesh_edit.slots.empty()) mesh_edit.active_slot = 0;
                     std::vector<int> slot_n(mesh_edit.slots.size(), 0);
                     for (const auto& f : mesh_edit.faces)
                         if (f.slot >= 0 && static_cast<std::size_t>(f.slot) < slot_n.size()) ++slot_n[static_cast<std::size_t>(f.slot)];
-                    int slot_del = -1;
-                    for (int si = 0; si < static_cast<int>(mesh_edit.slots.size()); ++si) {
-                        auto& sl = mesh_edit.slots[static_cast<std::size_t>(si)];
-                        ImGui::PushID(7100 + si);
-                        if (ImGui::RadioButton("##act", mesh_edit.active_slot == si)) mesh_edit.active_slot = si;
-                        tip("Slot activo: las caras nuevas van aca");
-                        ImGui::SameLine();
-                        char nbuf[64]{};
-                        std::snprintf(nbuf, sizeof(nbuf), "%s", sl.name.c_str());
-                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x * 0.38f);
-                        if (ImGui::InputText("##name", nbuf, sizeof(nbuf))) sl.name = nbuf;
-                        ImGui::SameLine();
-                        const std::string tp =
-                            (sl.tex >= 0 && static_cast<std::size_t>(sl.tex) < mesh_edit.tex_list.size())
-                                ? mesh_edit.tex_list[static_cast<std::size_t>(sl.tex)].filename().string()
-                                : std::string("(sin textura)");
-                        ImGui::SetNextItemWidth(-44.f);
-                        if (ImGui::BeginCombo("##tex", tp.c_str())) {
-                            for (int i = 0; i < static_cast<int>(mesh_edit.tex_list.size()); ++i) {
-                                const std::string lab = std::to_string(i) + "  " +
-                                                        mesh_edit.tex_list[static_cast<std::size_t>(i)].filename().string();
-                                if (ImGui::Selectable(lab.c_str(), i == sl.tex)) mesh_slot_set_tex(si, i);
+                    constexpr float kRowH = 26.f, kSideW = 30.f;
+                    const float list_h =
+                        std::clamp(static_cast<float>(mesh_edit.slots.size()) * (kRowH + 2.f) + 10.f, 64.f, 220.f);
+                    const float list_w = ImGui::GetContentRegionAvail().x - kSideW - ImGui::GetStyle().ItemSpacing.x;
+                    if (ImGui::BeginChild("##mat_slots", ImVec2(list_w, list_h), ImGuiChildFlags_Borders)) {
+                        if (mesh_edit.slots.empty()) ImGui::TextDisabled("Sin materiales: + agrega uno");
+                        for (int si = 0; si < static_cast<int>(mesh_edit.slots.size()); ++si) {
+                            const auto& sl = mesh_edit.slots[static_cast<std::size_t>(si)];
+                            ImGui::PushID(7100 + si);
+                            const auto tp = mesh_tex_path_at(sl.tex);
+                            const std::uint64_t th = tp.empty() ? 0 : mesh_tex_thumb(tp);
+                            if (th != 0) {
+                                ImGui::Image(static_cast<ImTextureID>(th), ImVec2(kRowH - 4.f, kRowH - 4.f));
+                            } else {
+                                const ImVec2 p0 = ImGui::GetCursorScreenPos();
+                                ImGui::GetWindowDrawList()->AddRectFilled(
+                                    p0, ImVec2(p0.x + kRowH - 4.f, p0.y + kRowH - 4.f),
+                                    IM_COL32(static_cast<int>(sl.fixed.diffuse[0] * 255.f),
+                                             static_cast<int>(sl.fixed.diffuse[1] * 255.f),
+                                             static_cast<int>(sl.fixed.diffuse[2] * 255.f), 255),
+                                    3.f);
+                                ImGui::Dummy(ImVec2(kRowH - 4.f, kRowH - 4.f));
                             }
-                            if (mesh_edit.tex_list.empty()) ImGui::TextDisabled("Agrega texturas abajo");
+                            ImGui::SameLine();
+                            char lab[160]{};
+                            std::snprintf(lab, sizeof(lab), "%s%s", sl.name.c_str(), sl.alpha == 1 ? "  [alpha]" : (sl.alpha == 2 ? "  [blend]" : ""));
+                            if (ImGui::Selectable(lab, mesh_edit.active_slot == si, 0, ImVec2(0.f, kRowH - 4.f)))
+                                mesh_edit.active_slot = si;
+                            if (ImGui::IsItemHovered())
+                                ImGui::SetTooltip("%s\n%d caras", tp.empty() ? "(sin textura)" : tp.filename().string().c_str(),
+                                                  slot_n[static_cast<std::size_t>(si)]);
+                            ImGui::SameLine(list_w - 52.f);
+                            ImGui::TextDisabled("%5d", slot_n[static_cast<std::size_t>(si)]);
+                            ImGui::PopID();
+                        }
+                    }
+                    ImGui::EndChild();
+                    ImGui::SameLine();
+                    ImGui::BeginGroup();
+                    if (ImGui::Button("+##slot_add", ImVec2(kSideW, kRowH))) mesh_slot_add();
+                    tip("Nuevo slot de material (queda activo: las caras nuevas van ahi)");
+                    const bool act_ok = mesh_slot_valid(mesh_edit.active_slot);
+                    if (!act_ok) ImGui::BeginDisabled();
+                    if (ImGui::Button("-##slot_del", ImVec2(kSideW, kRowH))) mesh_slot_delete(mesh_edit.active_slot);
+                    tip("Quitar el slot activo (sus caras pasan al slot anterior)");
+                    if (!act_ok) ImGui::EndDisabled();
+                    ImGui::EndGroup();
+
+                    const float w3 = bw(3);
+                    if (!act_ok || !has_faces) ImGui::BeginDisabled();
+                    if (ImGui::Button("Asignar", ImVec2(w3, 0.f))) mesh_slot_assign_sel(mesh_edit.active_slot);
+                    tip("Las caras seleccionadas pasan al slot activo (y toman su material)");
+                    if (!act_ok || !has_faces) ImGui::EndDisabled();
+                    ImGui::SameLine();
+                    if (!act_ok) ImGui::BeginDisabled();
+                    if (ImGui::Button("Seleccionar", ImVec2(w3, 0.f))) mesh_slot_select(mesh_edit.active_slot, true);
+                    tip("Agrega a la seleccion las caras del slot activo");
+                    ImGui::SameLine();
+                    if (ImGui::Button("Deseleccionar", ImVec2(w3, 0.f))) mesh_slot_deselect(mesh_edit.active_slot);
+                    tip("Quita de la seleccion las caras del slot activo");
+                    if (!act_ok) ImGui::EndDisabled();
+
+                    if (act_ok) {
+                        auto& sl = mesh_edit.slots[static_cast<std::size_t>(mesh_edit.active_slot)];
+                        ImGui::PushID("slot_edit");
+                        char nbuf[96]{};
+                        std::snprintf(nbuf, sizeof(nbuf), "%s", sl.name.c_str());
+                        if (ImGui::InputText("Nombre", nbuf, sizeof(nbuf))) sl.name = nbuf;
+                        const auto tp = mesh_tex_path_at(sl.tex);
+                        const std::string tlab = tp.empty() ? std::string("(sin textura)") : tp.filename().string();
+                        ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x - 150.f);
+                        if (ImGui::BeginCombo("##tex", tlab.c_str())) {
+                            for (int i = 0; i < static_cast<int>(mesh_edit.tex_list.size()); ++i) {
+                                ImGui::PushID(i);
+                                const auto& ip = mesh_edit.tex_list[static_cast<std::size_t>(i)];
+                                if (const std::uint64_t t2 = mesh_tex_thumb(ip)) {
+                                    ImGui::Image(static_cast<ImTextureID>(t2), ImVec2(18.f, 18.f));
+                                    ImGui::SameLine();
+                                }
+                                if (ImGui::Selectable(ip.filename().string().c_str(), i == sl.tex)) mesh_slot_set_tex(mesh_edit.active_slot, i);
+                                ImGui::PopID();
+                            }
+                            if (mesh_edit.tex_list.empty()) ImGui::TextDisabled("Sin texturas: usá Buscar...");
                             ImGui::EndCombo();
                         }
-                        tip("Textura del slot: se aplica a todos sus triangulos");
+                        tip("Textura difusa del slot: la toman todas sus caras");
                         ImGui::SameLine();
-                        ImGui::TextDisabled("%d", slot_n[static_cast<std::size_t>(si)]);
-                        if (ImGui::SmallButton("Seleccionar")) mesh_slot_select(si, ImGui::GetIO().KeyShift);
-                        tip("Selecciona las caras del slot (Shift: agrega a la seleccion)");
-                        ImGui::SameLine();
-                        if (!has_faces) ImGui::BeginDisabled();
-                        if (ImGui::SmallButton("Mover seleccion aca")) mesh_slot_assign_sel(si);
-                        tip("Las caras seleccionadas pasan a este slot (y toman su textura)");
-                        if (!has_faces) ImGui::EndDisabled();
-                        ImGui::SameLine();
-                        if (mesh_edit.tex_sel >= 0 && static_cast<std::size_t>(mesh_edit.tex_sel) < mesh_edit.tex_list.size()) {
-                            if (ImGui::SmallButton("Tex actual")) mesh_slot_set_tex(si, mesh_edit.tex_sel);
-                            tip("Le da al slot la textura elegida en 'Tex'");
-                            ImGui::SameLine();
+                        if (ImGui::Button("Buscar...")) {
+                            mesh_edit.tex_browse_slot = mesh_edit.active_slot;
+                            mesh_edit.tex_browse_sel0 = mesh_edit.tex_sel;
+                            mesh_tex_browse();
                         }
-                        if (ImGui::SmallButton("Borrar")) slot_del = si;
-                        tip("Borra el slot (sus caras quedan sin slot, con su textura)");
+                        ImGui::SameLine();
+                        ImGui::TextUnformatted("Difusa");
+                        const char* alpha_names[3] = {"Opaco", "Alpha test (matl_alpha 1)", "Alpha blend (matl_alpha 2)"};
+                        if (ImGui::Combo("Alpha", &sl.alpha, alpha_names, 3)) {
+                            mesh_edit.dirty = true;
+                            mesh_refresh_preview();
+                        }
+                        tip("[matl_alpha] del material (se escribe en el .sco al hornear)");
+                        bool mchg = false;
+                        mchg |= ImGui::ColorEdit4("Diffuse", sl.fixed.diffuse, ImGuiColorEditFlags_Float);
+                        mchg |= ImGui::ColorEdit3("Specular", sl.fixed.specular, ImGuiColorEditFlags_Float);
+                        mchg |= ImGui::ColorEdit3("Emissive", sl.fixed.emission, ImGuiColorEditFlags_Float);
+                        mchg |= ImGui::DragFloat("Power", &sl.fixed.power, 0.5f, 0.f, 256.f, "%.1f");
+                        tip("Valores [matl] del .o3d: color difuso, especular, emisivo y brillo (power)");
+                        if (mchg) mesh_edit.dirty = true;
                         ImGui::PopID();
                     }
-                    if (slot_del >= 0) mesh_slot_delete(slot_del);
                 }
 
                 ImGui::SeparatorText(omsi::ui::i18n::tr_lit("Textura / UV"));

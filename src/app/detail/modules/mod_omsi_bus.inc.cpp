@@ -996,6 +996,14 @@
                 panel.set_status("OMSI bus: openOMSI no pudo cargar " + omsi::path_text(bus_path.filename()) + " (ver log)");
                 return;
             }
+            // its depot file (.hof) for this map and a destination on its signs - without one its IBIS had no
+            // terminus to show and the destination sign stayed a blank green panel
+            {
+                const auto mu8 = cfg.global.root.u8string();
+                const std::string mdir(mu8.begin(), mu8.end());
+                if (!oo_bus_set_depot(b->oo, mdir.c_str(), "", ""))
+                    log::warn("omsi bus: no depot file (.hof) for this bus on this map - its signs stay blank");
+            }
             b->ground_fn = [&, bi = b.get()](float gx, float gy, float zh) {
                 constexpr float kCell = 0.25f;
                 const auto corner = [&](int ix, int iy) {

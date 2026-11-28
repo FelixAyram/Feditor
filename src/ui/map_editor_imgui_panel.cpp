@@ -190,6 +190,8 @@ std::function<void(const std::filesystem::path&)> g_thumb_srv_evict;
 std::function<bool()> g_mesh_tab_active;
 std::function<void()> g_mesh_tab_draw;
 std::function<void()> g_coop_tab_draw;
+// "Opciones del editor" > Sonido: drawn by the app (the world sound lives there)
+std::function<void()> g_options_sound;
 std::unordered_map<std::uint64_t, std::filesystem::path> g_thumb_px_tga;
 
 bool write_tga_wh(const std::filesystem::path& p, const std::vector<ImU32>& px, int w, int h) {
@@ -3481,6 +3483,12 @@ void draw_options_editor(const MapEditorImGuiArgs& args) {
     ImGui::SameLine();
     ImGui::TextDisabled("%s", i18n::tr_lit("(limita FPS al Hz del monitor)"));
 
+    if (g_options_sound) {
+        // the world sound (was the floating "Sonido 3D" window); applied and saved at once
+        ImGui::SeparatorText(i18n::tr_lit("Sonido"));
+        g_options_sound();
+    }
+
     ImGui::Spacing();
     ImGui::Separator();
     ImGui::TextDisabled("%s", i18n::tr_lit("Se guarda en omsi_f4_editor.cfg (junto al exe, igual para todos los mapas)."));
@@ -3758,7 +3766,12 @@ void draw_hover_catalog_preview(EditorSidePanelImGuiState& st, const std::filesy
 
 void draw_fav_preset_docks(EditorSidePanel& panel, const ImGuiViewport* vp, const std::filesystem::path& omsi_root) {
     auto& st=panel.imgui_state(); load_editor_docks(st);
-    const float left=400.f, rest=(std::max)(320.f,vp->WorkSize.x-left);
+    // (ends at the docked small windows' column, gliding when they open / close - it ran under them)
+    static float s_dock_right=-1.f;
+    const float right_target=(std::min)(vp->WorkPos.x+vp->WorkSize.x, float_layout_column_left()-10.f);
+    if(s_dock_right<0.f) s_dock_right=right_target;
+    else { const float k=1.f-std::exp(-(std::min)(0.1f,ImGui::GetIO().DeltaTime)*14.f); s_dock_right+=(right_target-s_dock_right)*k; if(std::fabs(right_target-s_dock_right)<0.5f) s_dock_right=right_target; }
+    const float left=400.f, rest=(std::max)(320.f,s_dock_right-vp->WorkPos.x-left);
     const float w=st.docks_size_mode==2?rest*.80f:(st.docks_size_mode==1?360.f:(std::clamp)(rest*.60f,500.f,1000.f));
     const float h=st.docks_size_mode==2?vp->WorkSize.y*.80f:(st.docks_size_mode==1?44.f:(std::clamp)(vp->WorkSize.y*.36f,240.f,480.f));
     ImGui::SetNextWindowPos(ImVec2(vp->WorkPos.x+left+(rest-w)*.5f,vp->WorkPos.y+vp->WorkSize.y-96.f),ImGuiCond_Always,ImVec2(0,1));
@@ -4695,6 +4708,9 @@ struct FloatGhost {
     float t = 0.f;
 };
 std::vector<FloatGhost> g_float_ghosts;
+// left edge of the docked column(s) this frame (the viewport's right edge when nothing is docked): the
+// Biblioteca bar at the bottom ends there instead of running under them
+float g_float_col_left = 1e30f;
 int g_float_cur = -1;
 
 // Slot targets for the windows open now (drawn this or the last frame), in order: a column against the right
@@ -4750,6 +4766,13 @@ ImVec2 float_slot_target(std::size_t want) {
 
 void float_layout_frame() {
     const int fr = ImGui::GetFrameCount();
+    {
+        const ImGuiViewport* vp = ImGui::GetMainViewport();
+        float col = vp->WorkPos.x + vp->WorkSize.x;
+        for (const auto& sl : g_float_slots)
+            if (sl.last_frame >= fr - 1 && sl.size.x > 1.f) col = (std::min)(col, sl.pos.x);
+        g_float_col_left = col;
+    }
     for (auto& sl : g_float_slots) {
         if (sl.last_frame == fr - 2 && !sl.ghosted && sl.size.x > 1.f) {
             g_float_ghosts.push_back({sl.pos, sl.size, 0.f});
@@ -4811,6 +4834,10 @@ void float_slot_begin(const char* key, int order) {
     ImGui::SetNextWindowPos(ImVec2(std::floor(sl.pos.x), std::floor(sl.pos.y)), ImGuiCond_Always);
     g_float_cur = static_cast<int>(idx);
 }
+
+float float_layout_column_left() { return g_float_col_left; }
+
+void set_options_sound_section(std::function<void()> draw) { g_options_sound = std::move(draw); }
 
 void float_slot_end() {
     if (g_float_cur < 0 || g_float_cur >= static_cast<int>(g_float_slots.size())) return;

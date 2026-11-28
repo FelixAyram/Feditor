@@ -319,6 +319,27 @@
             return t.ok ? t.gpu : 0;
         });
     }
+    // Opciones del editor > Sonido (was the floating "Sonido 3D" window): applied at once, saved on release
+    ui::set_options_sound_section([&]() {
+        bool changed = false, commit = false;
+        if (ImGui::Checkbox("Activar sonido##ws_on", &world_sound_ui.enabled)) changed = commit = true;
+        ImGui::SetNextItemWidth(240.f);
+        if (ImGui::SliderFloat("Volumen##ws_vol", &world_sound_ui.volume_pct, 0.f, 100.f, "%.0f %%")) changed = true;
+        if (ImGui::IsItemDeactivatedAfterEdit()) commit = true;
+        ImGui::TextDisabled("Objetos con sonido: %d   En rango: %d   Voces: %d",
+                            static_cast<int>(world_sound_scene.candidate_count()),
+                            static_cast<int>(world_sound_scene.live_objects()),
+                            static_cast<int>(world_sound_scene.live_voices()));
+        if (changed) {
+            world_sound.set_enabled(world_sound_ui.enabled);
+            world_sound.set_master_volume(world_sound_ui.volume_pct / 100.f);
+        }
+        if (commit) {
+            editor_ui_settings.world_sound_enabled = world_sound_ui.enabled;
+            editor_ui_settings.world_sound_volume = world_sound_ui.volume_pct;
+            map::save_editor_ui_settings(cfg.global.root, editor_ui_settings);
+        }
+    });
     if (imgui_overlay.active() && !ultralight_ui) {
         mesh_tab_hosted = true;
         ui::set_coop_session_tab([&]() { draw_coop_session_tab(); });

@@ -2142,8 +2142,11 @@
                     continue;
                 }
                 renderer.set_chunk_wireframe(rail.chunk, false);
+                // classic: surface bias (its path.sli ribbon has its own height). Modern: the flat 6 cm strip
+                // lay in the road's plane and sank / was cut by it; without the surface bias the renderer
+                // draws it with the path-rail pipeline (vs_rail: +6 cm toward the eye, after the scene).
                 renderer.set_chunk_render_phase(rail.chunk, omsi::gfx::dx12::WorldRenderPhase::Normal,
-                                               /*surface_bias=*/true, /*decal=*/false);
+                                               /*surface_bias=*/!modern_paths, /*decal=*/false);
                 const bool traffic_paint = in_traffic || sco_path_edit.active;
                 const auto tint = rail_tint_for(rail.from_object, rail.owner_id, rail.path_index, rail.path_typ);
                 const bool hovered = traffic_paint && (hover_path_rail == static_cast<int>(ri));
@@ -2226,8 +2229,10 @@
                         const std::size_t ch = renderer.chunk_count() - 1;
                         renderer.set_chunk_visible(ch, false);
                         renderer.set_chunk_fixed_lit(ch, true);
-                        renderer.set_chunk_render_phase(ch, omsi::gfx::dx12::WorldRenderPhase::OnSurface,
-                                                       /*surface_bias=*/true, /*decal=*/true);
+                        // over the ground like the modern rails (path-rail pipeline), never half buried
+                        renderer.set_chunk_path_rail(ch, true);
+                        renderer.set_chunk_render_phase(ch, omsi::gfx::dx12::WorldRenderPhase::Normal,
+                                                       /*surface_bias=*/false, /*decal=*/false);
                         modern_node_chunks.push_back(ch);
                     }
                     node_pool_init = true;
@@ -3354,19 +3359,8 @@
                         teleport_camera_to_entrypoint(ep, "ai_bus_list");
                         ai_goto_request.reset();
                     }
-                    // World sound window (self-contained block, see omsi/sound/world_sound_window.hpp).
-                    const int ws_flags = omsi::sound::draw_world_sound_window(
-                        world_sound_ui, world_sound_scene.candidate_count(), world_sound_scene.live_objects(),
-                        world_sound_scene.live_voices());
-                    if (ws_flags & omsi::sound::kWorldSoundChanged) {
-                        world_sound.set_enabled(world_sound_ui.enabled);
-                        world_sound.set_master_volume(world_sound_ui.volume_pct / 100.f);
-                    }
-                    if (ws_flags & omsi::sound::kWorldSoundCommit) {
-                        editor_ui_settings.world_sound_enabled = world_sound_ui.enabled;
-                        editor_ui_settings.world_sound_volume = world_sound_ui.volume_pct;
-                        map::save_editor_ui_settings(cfg.global.root, editor_ui_settings);
-                    }
+                    // World sound: in Opciones del editor > Sonido (set_options_sound_section, setup_06); the
+                    // floating "Sonido 3D" window overlapped the panel and the other windows.
                 }
                 place_fx.tick(ImGui::GetIO().DeltaTime);
                 {
@@ -3434,7 +3428,9 @@
                             for (const auto ch : car_it->second.chunks)
                                 if (ch != kNoChunk) s_hl_chunks.push_back(ch);
                         }
-                        for (const auto ch : s_hl_chunks) renderer.set_chunk_highlight(ch, 0.35f, 1.f, 0.85f, 0.2f);
+                        // (no tint while the camera follows it: the selection was only to pick it)
+                        if (ai_follow_id != ai_selected_id)
+                            for (const auto ch : s_hl_chunks) renderer.set_chunk_highlight(ch, 0.35f, 1.f, 0.85f, 0.2f);
                         char part[1024]{};
                         oo_traffic_car_part_file(ai_traffic, ai_i, 0, part, sizeof(part));
                         float m16[16]{};
@@ -3487,8 +3483,9 @@
                                     static const char* kAct[] = {"circulando", "acelerando", "frenando", "en cola",
                                                                  "semaforo en rojo", "cediendo el paso", "en la parada",
                                                                  "saliendo / estacionando", "fin del camino",
-                                                                 "esperando sitio a la salida", "detenido"};
-                                    const int a = s_st.action >= 0 && s_st.action < 11 ? s_st.action : 0;
+                                                                 "esperando sitio a la salida", "detenido",
+                                                                 "dejando pasar a un vehiculo de emergencia"};
+                                    const int a = s_st.action >= 0 && s_st.action < 12 ? s_st.action : 0;
                                     const ImVec4 col = a == 2 || a == 4 ? ImVec4(1.f, 0.45f, 0.35f, 1.f)
                                                        : a == 1           ? ImVec4(0.45f, 1.f, 0.5f, 1.f)
                                                        : a >= 3           ? ImVec4(1.f, 0.85f, 0.3f, 1.f)
@@ -4337,26 +4334,45 @@
                             }
                             const float lamp_k = (std::max)(sky.night_blend, 0.3f);
                             int pools = 0;
+                            float pool_xy[8][2]{}; // (the AI cars already given a beam: one per car)
                             for (std::size_t i = 0; i < nlamps; ++i) {
                                 const float* q = &s_lamp_buf[i * 10];
                                 if (i < n_bus_lamps) {
                                     // the player's bus: only the pool its headlight throws on the road, well ahead of
                                     // the bumper and low - no light at the lamp (in the body it lit the dash and cab),
                                     // and the pool lights neither the bus nor its saloon (interior = -1)
+                                    // One beam for the bus from between its two lamps: a near pool and a wider, dimmer
+                                    // far one - the light reaches ~45 m along the road (a pool's cut-off is six times
+                                    // its core, inverse-square past it) with two lights, not one short pool per lamp.
+                                    if (i != 0) continue;
                                     const float hl = std::hypot(q[3], q[4]);
                                     if (hl < 0.3f) continue;
-                                    SceneLightT p{};
-                                    p.x = q[0] + q[3] / hl * 11.f;
-                                    p.y = q[1] + q[4] / hl * 11.f;
-                                    p.z = q[2] - 0.4f;
-                                    p.range = 5.5f;
-                                    p.r = q[6] * 0.6f;
-                                    p.g = q[7] * 0.6f;
-                                    p.b = q[8] * 0.6f;
+                                    float cx = 0.f, cy = 0.f, cz = 0.f;
+                                    for (std::size_t j = 0; j < n_bus_lamps; ++j) {
+                                        cx += s_lamp_buf[j * 10 + 0];
+                                        cy += s_lamp_buf[j * 10 + 1];
+                                        cz += s_lamp_buf[j * 10 + 2];
+                                    }
+                                    cx /= static_cast<float>(n_bus_lamps);
+                                    cy /= static_cast<float>(n_bus_lamps);
+                                    cz /= static_cast<float>(n_bus_lamps);
+                                    const float dxh = q[3] / hl, dyh = q[4] / hl;
                                     // (by day it needs more to show on sunlit asphalt; at night as before)
-                                    p.intensity = (std::max)(sky.night_blend, 0.75f);
-                                    p.interior = -1.f;
-                                    s_all_lights.push_back(p);
+                                    const float bus_k = (std::max)(sky.night_blend, 0.75f);
+                                    const struct { float ahead, core, k; } beam[2] = {{10.f, 6.f, 0.62f}, {28.f, 9.f, 0.34f}};
+                                    for (const auto& bm : beam) {
+                                        SceneLightT p{};
+                                        p.x = cx + dxh * bm.ahead;
+                                        p.y = cy + dyh * bm.ahead;
+                                        p.z = cz - 0.4f;
+                                        p.range = bm.core;
+                                        p.r = q[6] * bm.k;
+                                        p.g = q[7] * bm.k;
+                                        p.b = q[8] * bm.k;
+                                        p.intensity = bus_k;
+                                        p.interior = -1.f;
+                                        s_all_lights.push_back(p);
+                                    }
                                     continue;
                                 }
                                 // AI cars, the way driving games light their traffic: the lamps themselves are their
@@ -4367,25 +4383,33 @@
                                 // forward only, low, short.
                                 const float hl = std::hypot(q[3], q[4]);
                                 const bool head = hl > 0.5f && q[5] > -0.6f && q[6] > 0.6f && q[7] > 0.6f && q[8] > 0.45f;
-                                constexpr int kAiPools = 4;
+                                // (the nearest 3 cars: a near pool and a wider, dimmer far one each - the beam reaches
+                                //  ~40 m down the road for 6 lights in all; the grid bins them, a pixel loops only the
+                                //  few that reach it)
+                                constexpr int kAiPools = 3;
                                 if (!head || pools >= kAiPools || sky.night_blend <= 0.05f) continue;
-                                const float px = q[0] + q[3] / hl * 9.f, py = q[1] + q[4] / hl * 9.f;
-                                bool same_car = false; // (its other headlight: one pool between them is enough)
+                                const float dxh = q[3] / hl, dyh = q[4] / hl;
+                                bool same_car = false; // (its other headlight: one beam between them is enough)
                                 for (int pi = 0; pi < pools && !same_car; ++pi) {
-                                    const auto& o = s_all_lights[s_all_lights.size() - 1 - static_cast<std::size_t>(pi)];
-                                    same_car = (o.x - px) * (o.x - px) + (o.y - py) * (o.y - py) < 2.5f * 2.5f;
+                                    const float ox = pool_xy[pi][0] - q[0], oy = pool_xy[pi][1] - q[1];
+                                    same_car = ox * ox + oy * oy < 2.5f * 2.5f;
                                 }
                                 if (same_car) continue;
-                                SceneLightT p{};
-                                p.x = px;
-                                p.y = py;
-                                p.z = q[2] - 0.3f;
-                                p.range = 7.f;
-                                p.r = q[6] * 0.32f;
-                                p.g = q[7] * 0.32f;
-                                p.b = q[8] * 0.30f;
-                                p.intensity = lamp_k;
-                                s_all_lights.push_back(p);
+                                pool_xy[pools][0] = q[0];
+                                pool_xy[pools][1] = q[1];
+                                const struct { float ahead, core, k; } beam[2] = {{9.f, 5.5f, 0.32f}, {25.f, 8.f, 0.18f}};
+                                for (const auto& bm : beam) {
+                                    SceneLightT p{};
+                                    p.x = q[0] + dxh * bm.ahead;
+                                    p.y = q[1] + dyh * bm.ahead;
+                                    p.z = q[2] - 0.3f;
+                                    p.range = bm.core;
+                                    p.r = q[6] * bm.k;
+                                    p.g = q[7] * bm.k;
+                                    p.b = q[8] * bm.k * 0.94f;
+                                    p.intensity = lamp_k;
+                                    s_all_lights.push_back(p);
+                                }
                                 ++pools;
                             }
                         }

@@ -37,6 +37,8 @@ pub struct OoTraffic {
     map_dir: PathBuf,
     service_files: Option<Vec<String>>,
     service_types: std::collections::HashMap<String, Arc<VehicleType>>,
+    /// a timetable bus's depot file (.hof) per vehicle folder (None: none found), see `service_hof`
+    service_hofs: std::collections::HashMap<PathBuf, Option<Arc<omsi_vehicle::Hof>>>,
     /// the editor camera's view (direction x y z, vertical fov in degrees, aspect), see oo_traffic_set_view
     view: Option<([f64; 3], f32, f64)>,
     /// cars giving way: (seconds waited, the car it gave way to last, how many have gone by since); see `patience`
@@ -45,6 +47,18 @@ pub struct OoTraffic {
     tuned: std::collections::HashSet<u64>,
     /// `[busstop]` objects' platform side (their 6th string: 0 right, 1 the other, 2 both), see oo_traffic_stop_side
     stop_sides: std::collections::HashMap<i64, f32>,
+    /// why the last timetable bus could not be placed (oo_traffic_last_error)
+    last_err: String,
+    /// cars making way for a siren: seconds standing so; and the sirens switched off until a time (a siren
+    /// stuck in a full street held every car around it for good)
+    make_way_wait: std::collections::HashMap<u64, f32>,
+    siren_quiet: std::collections::HashMap<u64, f32>,
+    /// the AI vehicles' sounds (see `update_audio`): the sets playing by car, the `[sound_ai]` plans by vehicle
+    /// file, the parsed configs by file, and the frame the sounds read
+    sounds: std::collections::HashMap<u64, omsi_audio::SoundSet>,
+    sound_plans: std::collections::HashMap<PathBuf, Option<Arc<SoundPlan>>>,
+    sound_cfgs: std::collections::HashMap<PathBuf, Option<Arc<omsi_vehicle::SoundCfg>>>,
+    sound_frame: omsi_sim::view_events::SoundFrame,
 }
 
 #[repr(C)]
@@ -182,6 +196,7 @@ pub extern "C" fn oo_traffic_create(map_dir: *const c_char, target: i32, spawn_r
             map_dir: dir.clone(),
             service_files: None,
             service_types: std::collections::HashMap::new(),
+            service_hofs: std::collections::HashMap::new(),
             ground: None,
             rng: 0x9E37_79B9_7F4A_7C15,
             initial: true,
@@ -192,6 +207,13 @@ pub extern "C" fn oo_traffic_create(map_dir: *const c_char, target: i32, spawn_r
             yield_watch: Default::default(),
             tuned: Default::default(),
             stop_sides: Default::default(),
+            last_err: String::new(),
+            make_way_wait: Default::default(),
+            siren_quiet: Default::default(),
+            sounds: Default::default(),
+            sound_plans: Default::default(),
+            sound_cfgs: Default::default(),
+            sound_frame: Default::default(),
         }))
     })
 }
@@ -199,7 +221,16 @@ pub extern "C" fn oo_traffic_create(map_dir: *const c_char, target: i32, spawn_r
 #[unsafe(no_mangle)]
 pub extern "C" fn oo_traffic_destroy(t: *mut OoTraffic) {
     if !t.is_null() {
-        guard((), || drop(unsafe { Box::from_raw(t) }));
+        guard((), || {
+            let mut b = unsafe { Box::from_raw(t) };
+            // (the AI cars' voices stop with the traffic: Trafico IA off)
+            if let Some(g) = global() {
+                for (_, mut s) in b.sounds.drain() {
+                    s.stop_all(&g.audio);
+                }
+            }
+            drop(b);
+        });
     }
 }
 
@@ -442,8 +473,12 @@ pub extern "C" fn oo_traffic_tick(t: *mut OoTraffic, dt: f32, cx: f64, cy: f64, 
             Some((DVec3::new(p[0], p[1], p[2]), p[3], p[4] as f32, p[5] as f32, p[6] as f32))
         };
         tune_new_cars(t);
+        quiet_sirens(t);
         t.sim.tick(dt, pb);
         patience(t, dt);
+        unjam_make_way(t, dt);
+        release_done_buses(t);
+        update_audio(t, center);
     })
 }
 
@@ -662,6 +697,9 @@ pub extern "C" fn oo_traffic_set_bus(t: *mut OoTraffic, bus: *mut crate::OoBus) 
         let speed = v.physics.speed;
         let bb = v.ty.def.bounding_box.unwrap_or([2.5, 11.0, 3.0, 0.0, 0.0, 1.5]);
         t.player = Some(omsi_sim::ai_traffic::light_paths::box_outline(v.position, v.heading, bb, speed));
+        // its indicators: a bus at its stop signalling towards the road is let out by the cars coming up behind
+        // (openOMSI obstacles.rs letting_out, as OMSI's traffic lets a bus leave) - never set, nobody let it out
+        t.sim.player_blinker = indicator(v);
         for (k, tp) in v.trailers.iter().enumerate() {
             if let Some(bb) = tp.ty.def.bounding_box {
                 t.sim.others.push((0xFFFF_0001 + k as u32, omsi_sim::ai_traffic::light_paths::box_outline(tp.position, tp.heading, bb, speed)));
@@ -854,7 +892,10 @@ pub extern "C" fn oo_traffic_service_bus(
     let st = if stops.is_null() { &[][..] } else { unsafe { std::slice::from_raw_parts(stops, n_stops * 4) } };
     with_t(t, 0, |t| {
         let ty = service_type(t, &bus_path);
-        let Some(ty) = ty else { return 0 };
+        let Some(ty) = ty else {
+            t.last_err = "no bus type (no timetable group in ailists.cfg, no AI bus in the random traffic)".into();
+            return 0;
+        };
         // the route: each entry's lane, the direction that goes on from the one before
         let net = &t.sim.net;
         let lanes_of = |id: i64, path: i64| -> Vec<usize> {
@@ -897,6 +938,7 @@ pub extern "C" fn oo_traffic_service_bus(
             route.push(pick);
         }
         if route.is_empty() {
+            t.last_err = format!("none of the track's {n_entries} paths from where it is are in the traffic's lanes yet");
             return 0;
         }
         place_service(t, ty, route, st, line, terminus)
@@ -933,17 +975,29 @@ fn place_service(t: &mut OoTraffic, ty: Arc<VehicleType>, route: Vec<usize>, st:
             let _ = t.sim.take_off_id(id, Removal::Finished);
         }
         if !t.sim.spawn_clear(&ty, pos, heading as f64) {
+            t.last_err = "something stands where it would start (not an AI car: the player's bus, a parked car)".into();
             return 0;
         }
     }
     let seed = next_rng(&mut t.rng);
     let scheme = if ty.paint_schemes.is_empty() { None } else { t.sim.ai_scheme(&ty, seed >> 8) };
+    // its depot file (.hof): the termini, codes and texts its signs show. Without one (hof: None, as before) the
+    // script had no terminus to look up and every destination sign stayed blank.
+    let hof = service_hof(t, &ty);
     let mut host = omsi_sim::VehicleHost::new(omsi_sim::SimClock::default());
     host.paint_scheme = Some(scheme);
+    host.hof = hof.clone();
     let mut vehicle = VehicleInstance::new(ty.clone(), host);
     vehicle.ground = t.ground.clone();
     vehicle.apply_paint_vars(scheme);
     crate::attach_coupled_parts(&t.root, &mut vehicle);
+    // the trip's line and terminus onto its signs, as openOMSI's timetable does (take_on.rs): the `Linie` string
+    // and the IBIS variables the scripts render, as if the driver had typed them
+    if let Some(k) = vehicle.ty.program.str_var("Linie") {
+        vehicle.state.str_vars[k as usize] = line.clone();
+    }
+    omsi_sim::timetable_run::set_ai_destination(&mut vehicle, hof.as_deref(), &line, &terminus, &[]);
+    vehicle.set_var("schedule_active", 1.0);
     let timetable = omsi_sim::ai_traffic::bus_service::AiTimetable {
         line,
         terminus,
@@ -953,14 +1007,32 @@ fn place_service(t: &mut OoTraffic, ty: Arc<VehicleType>, route: Vec<usize>, st:
         route: route.clone(),
         stops: stop_list.into_iter().map(omsi_sim::ai_traffic::bus_service::Stop::from_tuple).collect(),
         number: None,
-        hof: None,
+        hof,
         timetable,
     };
     let r0 = route[0];
     // (no station of its trip on the way the network has yet: it drives on as traffic rather than ending its
     //  trip on the spot and standing there braked)
     let setup = if setup.stops.is_empty() { None } else { Some(setup) };
-    t.sim.place_car(vehicle, LaneKind::Street, r0, 1.0, ty, seed, scheme, None, Some(0.0), setup)
+    let id = t.sim.place_car(vehicle, LaneKind::Street, r0, 1.0, ty, seed, scheme, None, Some(0.0), setup);
+    t.last_err = if id == 0 { "openOMSI refused the car (place_car)".into() } else { String::new() };
+    id
+}
+
+/// The depot file (.hof) a timetable bus of type `ty` runs with on this map: the one the map's ailists depot groups
+/// name ([aigroup_depot] / its hof), from the bus's own folder first, else anywhere (HOFs/, maps, vehicles); else
+/// the bus folder's depot file that belongs to the map by name (openOMSI `depot_like`, the map folder's name as
+/// the hint). Read once per vehicle folder.
+fn service_hof(t: &mut OoTraffic, ty: &VehicleType) -> Option<Arc<omsi_vehicle::Hof>> {
+    let dir = ty.def.path.parent().map(Path::to_path_buf).unwrap_or_default();
+    if let Some(h) = t.service_hofs.get(&dir) {
+        return h.clone();
+    }
+    let hof = crate::find_depot(&t.map_dir, &dir).map(Arc::new);
+    say(0, &format!("traffic: timetable buses of {} use depot file {}", dir.display(),
+        hof.as_ref().map(|h| format!("with {} termini", h.termini.len())).unwrap_or_else(|| "none".into())));
+    t.service_hofs.insert(dir, hof.clone());
+    hof
 }
 
 fn service_type(t: &mut OoTraffic, bus_path: &str) -> Option<Arc<VehicleType>> {
@@ -1031,7 +1103,10 @@ pub extern "C" fn oo_traffic_service_bus_stations(
     let terminus = unsafe { cstr(terminus) }.unwrap_or("").to_string();
     let st = unsafe { std::slice::from_raw_parts(stops, n_stops * 4) };
     with_t(t, 0, |t| {
-        let Some(ty) = service_type(t, &bus_path) else { return 0 };
+        let Some(ty) = service_type(t, &bus_path) else {
+            t.last_err = "no bus type (no timetable group in ailists.cfg, no AI bus in the random traffic)".into();
+            return 0;
+        };
         let net = &t.sim.net;
         // the street lanes passing within 20 m of (x, y), nearest first (both directions: the stop's side decides)
         let near_all = |x: f64, y: f64| -> Vec<usize> {
@@ -1052,6 +1127,7 @@ pub extern "C" fn oo_traffic_service_bus_stations(
         };
         let starts = near_all(sx, sy);
         if starts.is_empty() {
+            t.last_err = "no street lane within 20 m of where it should be".into();
             return 0;
         }
         // from the start lane that reaches the first station by the shortest way, on station by station
@@ -1182,6 +1258,8 @@ pub extern "C" fn oo_traffic_car_state(t: *mut OoTraffic, id: u64, out: *mut OoC
             4
         } else if why == "yield" || why == "merge" || (c.yielding && why.is_empty()) {
             5
+        } else if why == "emergency" {
+            11 // (making way for a siren: see unjam_make_way)
         } else if why == "lead" && standing {
             3
         } else if c.light_hold && why.is_empty() {
@@ -1302,4 +1380,242 @@ pub extern "C" fn oo_traffic_stop_side(t: *mut OoTraffic, id: i64, side: f32) {
     with_t(t, (), |t| {
         t.stop_sides.insert(id, if side.is_finite() { side.clamp(0.0, 2.0) } else { 0.0 });
     })
+}
+
+/// What a vehicle's indicators show: 0 off, 1 left, 2 right, 3 hazard (omsi-lan game.rs `indicator`).
+fn indicator(v: &VehicleInstance) -> u8 {
+    let on = |n: &str| v.var(n).unwrap_or(0.0) > 0.5;
+    if on("lights_sw_warnblinker") {
+        3
+    } else {
+        match v.var("lights_sw_blinker") {
+            Some(s) if (0.5..2.5).contains(&s) => s.round() as u8,
+            _ => match (on("lights_blinker_l"), on("lights_blinker_r")) {
+                (true, true) => 3,
+                (true, false) => 1,
+                (false, true) => 2,
+                _ => 0,
+            },
+        }
+    }
+}
+
+/// A siren switched off (see `unjam_make_way`) stays off until its time.
+fn quiet_sirens(t: &mut OoTraffic) {
+    if t.siren_quiet.is_empty() {
+        return;
+    }
+    let now = t.sim.time;
+    t.siren_quiet.retain(|_, until| *until > now);
+    for c in &mut t.sim.cars {
+        if t.siren_quiet.contains_key(&c.id) {
+            c.vehicle.set_var("TrafficPriority", 0.0);
+        }
+    }
+}
+
+/// A car that has stood 10 s making way for an emergency vehicle ("emergency" in the car window) in a street
+/// too full to let it by: the siren is switched off for a minute and everybody drives on (they stood for good).
+fn unjam_make_way(t: &mut OoTraffic, dt: f32) {
+    let now = t.sim.time;
+    let mut quiet: Vec<u64> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for c in &mut t.sim.cars {
+        let Some(w) = c.make_way else { continue };
+        if c.vehicle.physics.speed.abs() > 0.5 {
+            continue;
+        }
+        seen.insert(c.id);
+        let e = t.make_way_wait.entry(c.id).or_insert(0.0);
+        *e += dt;
+        if *e > 10.0 {
+            quiet.push(w.from);
+            c.make_way = None;
+            c.state.speed_cap = None;
+            *e = 0.0;
+        }
+    }
+    t.make_way_wait.retain(|id, _| seen.contains(id));
+    for id in quiet {
+        t.siren_quiet.insert(id, now + 60.0);
+    }
+    if !t.siren_quiet.is_empty() {
+        quiet_sirens(t);
+    }
+}
+
+/// A timetable bus whose trip is done ("TripDone", standing in the street) drives on as traffic after 5 s and
+/// goes once nobody sees it (it has no next trip of its tour here: the editor places buses by the clock).
+fn release_done_buses(t: &mut OoTraffic) {
+    for c in &mut t.sim.cars {
+        let done = c.bus.as_ref().is_some_and(|b| b.trip_done() && b.phase_t > 5.0);
+        if done {
+            c.bus = None;
+            c.state.route.clear();
+            c.state.route_index = 0;
+            c.gone = false;
+        }
+    }
+}
+
+/// Why the last timetable bus (oo_traffic_service_bus / _stations) was not placed; "" when it was.
+#[unsafe(no_mangle)]
+pub extern "C" fn oo_traffic_last_error(t: *mut OoTraffic, buf: *mut c_char, cap: usize) -> usize {
+    with_t(t, 0, |t| crate::write_cstr(&t.last_err, buf, cap))
+}
+
+// ---------------------------------------------------------------- AI vehicles' sounds
+// (openOMSI omsi-app view_sync/traffic_audio.rs, ported: the same engine and master volume as the player's bus)
+
+/// A vehicle definition's `[sound_ai]` (else `[sound]`) configuration, the folder its clips are named from,
+/// and those clips' files.
+pub struct SoundPlan {
+    cfg: Arc<omsi_vehicle::SoundCfg>,
+    dir: PathBuf,
+    clips: Vec<PathBuf>,
+}
+
+/// How many AI vehicles are heard at once (the nearest), and how far.
+const AUDIO_CARS: usize = 8;
+const AUDIO_NEAR: f64 = 150.0;
+
+fn sound_plan(
+    plans: &mut std::collections::HashMap<PathBuf, Option<Arc<SoundPlan>>>,
+    cfgs: &mut std::collections::HashMap<PathBuf, Option<Arc<omsi_vehicle::SoundCfg>>>,
+    def: &omsi_vehicle::Vehicle,
+) -> Option<Arc<SoundPlan>> {
+    if let Some(plan) = plans.get(def.path.as_path()) {
+        return plan.clone();
+    }
+    let plan = def.sound_ai.as_ref().or(def.sound.as_ref()).and_then(|rel| {
+        let path = omsi_cfg::resolve_path(def.dir(), rel);
+        let cfg = cfgs
+            .entry(path.clone())
+            .or_insert_with(|| match omsi_vehicle::SoundCfg::load(&path) {
+                Ok(c) => Some(Arc::new(c)),
+                Err(e) => {
+                    say(1, &format!("traffic sound {}: {e}", path.display()));
+                    None
+                }
+            })
+            .clone()?;
+        let dir = path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let clips = omsi_audio::SoundSet::clip_paths(&cfg, &dir);
+        Some(Arc::new(SoundPlan { cfg, dir, clips }))
+    });
+    plans.insert(def.path.clone(), plan.clone());
+    plan
+}
+
+fn own_horn(cfg: &omsi_vehicle::SoundCfg) -> Option<&str> {
+    cfg.sounds.iter().map(|s| s.file.trim()).find(|f| {
+        let f = f.to_ascii_lowercase();
+        f.contains("hupe") || f.contains("horn")
+    })
+}
+
+/// The `[sound_ai]` sets of the AUDIO_CARS nearest cars within AUDIO_NEAR of the listener (the camera), fed
+/// with each car's own variables every frame (engine, rolling, brakes, doors, its triggers); the others are
+/// silenced and their sets let go. Horns: the car's own, else OMSI's AI horn.
+fn update_audio(t: &mut OoTraffic, listener: DVec3) {
+    let Some(g) = global() else { return };
+    let audio = &g.audio;
+    if !audio.enabled {
+        return;
+    }
+    audio.follow_device();
+    // the listener: the editor's camera (the player's bus sets it too, from the same camera)
+    let fwd = t.view.map(|(d, _, _)| glam::Vec3::new(d[0] as f32, d[1] as f32, d[2] as f32)).unwrap_or(glam::Vec3::Y).normalize_or(glam::Vec3::Y);
+    let right = fwd.cross(glam::Vec3::Z).normalize_or(glam::Vec3::X);
+    audio.set_listener(omsi_audio::mixer::Listener { position: listener.as_vec3(), forward: fwd, right, ..Default::default() });
+    let _ = audio.trim_clips(std::time::Duration::from_secs(60));
+    let mut frame = std::mem::take(&mut t.sound_frame);
+    t.sim.snapshot_sounds(&mut frame, listener, AUDIO_NEAR * 1.2, 0.0, None);
+    // the nearest heard cars
+    let mut near: Vec<(f64, u64)> = frame.cars().iter().filter(|c| c.heard).map(|c| ((c.position - listener).length(), c.id)).filter(|(d, _)| *d < AUDIO_NEAR).collect();
+    near.sort_by(|a, b| a.0.total_cmp(&b.0));
+    near.truncate(AUDIO_CARS);
+    let keep: std::collections::HashSet<u64> = near.iter().map(|x| x.1).collect();
+    let gone: Vec<u64> = t.sounds.keys().copied().filter(|id| !keep.contains(id)).collect();
+    for id in gone {
+        if let Some(mut s) = t.sounds.remove(&id) {
+            s.stop_all(audio);
+        }
+    }
+    let mut triggers = Vec::new();
+    for c in frame.cars() {
+        if !keep.contains(&c.id) {
+            continue;
+        }
+        if !t.sounds.contains_key(&c.id) {
+            if let Some(plan) = sound_plan(&mut t.sound_plans, &mut t.sound_cfgs, &c.ty.def) {
+                // an articulated bus's rear section sounds too
+                let mut parts = Vec::new();
+                for (i, pt) in c.part_types.iter().enumerate() {
+                    if let Some(part) = sound_plan(&mut t.sound_plans, &mut t.sound_cfgs, &pt.def) {
+                        parts.push((i, part));
+                    }
+                }
+                // (the clips are read in the background the first time; silent till then)
+                if audio.clips_ready(&plan.clips) && parts.iter().all(|(_, p)| audio.clips_ready(&p.clips)) {
+                    let mut ss = omsi_audio::SoundSet::new_exterior(audio, &plan.cfg.chosen_for(&c.number), &plan.dir);
+                    for (i, part) in &parts {
+                        ss.add_part(*i, omsi_audio::SoundSet::new_exterior(audio, &part.cfg.chosen_for(&c.number), &part.dir));
+                    }
+                    triggers.push((c.id, ss.curve_triggers().into_iter().collect()));
+                    t.sounds.insert(c.id, ss);
+                }
+            }
+        }
+        if let Some(ss) = t.sounds.get_mut(&c.id) {
+            let xf = c.world;
+            let vars = frame.vars(c);
+            let var = |n: &str| c.var_slot(n).and_then(|i| vars.get(i).copied());
+            let at_fire = |tr: &str, n: &str| -> Option<f32> {
+                let vals = &c.fired_vars.iter().rev().find(|(k, _)| k.eq_ignore_ascii_case(tr))?.1;
+                c.var_slot(n).and_then(|i| vals.get(i).copied())
+            };
+            ss.update_fired(audio, &var, &xf, &c.fired, &at_fire);
+            let parts = frame.parts(c);
+            ss.update_parts(audio, &var, &|i| parts.get(i).copied(), &c.fired, &at_fire);
+            for (tr, f) in &c.fired_files {
+                ss.play_file_trigger(audio, tr, f, &var, &xf);
+            }
+        }
+    }
+    for (id, tr) in triggers {
+        t.sim.set_sound_triggers(id, tr);
+    }
+    // the horns of the cars that honked: a car whose own set answers ev_AI_Horn was heard by it already
+    for (heavy, position, ty) in &frame.honks {
+        if (*position - listener).length() > AUDIO_NEAR * 1.5 {
+            continue;
+        }
+        let plan = sound_plan(&mut t.sound_plans, &mut t.sound_cfgs, &ty.def);
+        if plan.as_ref().is_some_and(|p| p.cfg.sounds.iter().any(|s| s.triggers.iter().any(|x| x.trim().eq_ignore_ascii_case("ev_AI_Horn")))) {
+            continue;
+        }
+        let file = if *heavy { "Sounds/AI_Cars/Hupe_Lkw.wav" } else { "Sounds/AI_Cars/hupe.wav" };
+        let path = plan
+            .as_ref()
+            .and_then(|p| own_horn(&p.cfg).map(|f| omsi_cfg::resolve_path(&p.dir, f)))
+            .filter(|p| omsi_cfg::vfs::is_file(p))
+            .unwrap_or_else(|| omsi_cfg::resolve_path(&t.root, file));
+        let Some(clip) = audio.load_clip(&path) else { continue };
+        let at = *position + DVec3::Z * 0.8;
+        audio.play(
+            clip,
+            omsi_audio::mixer::VoiceParams {
+                gain: 1.0,
+                pitch: 1.0,
+                looping: false,
+                position: Some(at.as_vec3()),
+                doppler: true,
+                range: 12.0,
+                lowpass_hz: 0.0,
+                important: false,
+            },
+        );
+    }
+    t.sound_frame = frame;
 }

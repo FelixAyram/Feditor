@@ -39,6 +39,7 @@ size_t oo_traffic_stats(OoTraffic*, char*, size_t) { return 0; }
 void oo_traffic_set_bus(OoTraffic*, OoBus*) {}
 float oo_traffic_car_var(OoTraffic*, int32_t, const char*, float f) { return f; }
 void oo_traffic_set_night(OoTraffic*, int32_t) {}
+int32_t oo_bus_set_depot(OoBus*, const char*, const char*, const char*) { return 0; }
 size_t oo_traffic_car_texttex_string(OoTraffic*, int32_t, const char*, char*, size_t) { return 0; }
 int32_t oo_traffic_remove_car(OoTraffic*, uint64_t) { return 0; }
 int32_t oo_teleport(OoBus*, double, double, double, double) { return 0; }
@@ -54,6 +55,7 @@ int32_t oo_traffic_car_body(OoTraffic*, int32_t, float*) { return 0; }
 void oo_traffic_set_view(OoTraffic*, double, double, double, float, float) {}
 size_t oo_traffic_car_explain(OoTraffic*, uint64_t, char*, size_t) { return 0; }
 void oo_traffic_stop_side(OoTraffic*, int64_t, float) {}
+size_t oo_traffic_last_error(OoTraffic*, char*, size_t) { return 0; }
 uint64_t oo_traffic_service_bus_stations(OoTraffic*, const char*, double, double, const double*, size_t, const char*,
                                          const char*) { return 0; }
 size_t oo_mesh_file(OoBus*, int32_t, char*, size_t) { return 0; }

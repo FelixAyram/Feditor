@@ -281,6 +281,38 @@ bool HelloO3dRenderer::create_pipeline() {
         throw_hr(d.device->CreateGraphicsPipelineState(&g, IID_PPV_ARGS(d.pipeline_state_ghost_spline.GetAddressOf())),
                  "CreateGhostSplinePSO");
     }
+    // Editor opacity ("fade", see internal.hpp): the same vertex shaders, both faces in both passes (the depth
+    // the colour pass meets must be exactly the prepass's), the colour masked off in the prepass.
+    {
+        ID3DBlob* vs_kind[2] = {nullptr, vs_surface.Get()};
+        for (int k = 0; k < 2; ++k) {
+            D3D12_GRAPHICS_PIPELINE_STATE_DESC g = pso;
+            if (vs_kind[k]) g.VS = {vs_kind[k]->GetBufferPointer(), vs_kind[k]->GetBufferSize()};
+            g.PS = {ps_alpha->GetBufferPointer(), ps_alpha->GetBufferSize()};
+            g.RasterizerState.CullMode = D3D12_CULL_MODE_NONE;
+            g.DepthStencilState.DepthEnable = TRUE;
+            g.DepthStencilState.DepthFunc = D3D12_COMPARISON_FUNC_GREATER_EQUAL;
+            // depth only: no colour written, depth of the nearest ghost surface (alpha-test texels discarded by ps_alpha)
+            g.BlendState.RenderTarget[0].BlendEnable = FALSE;
+            g.BlendState.RenderTarget[0].RenderTargetWriteMask = 0;
+            g.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ALL;
+            throw_hr(d.device->CreateGraphicsPipelineState(&g, IID_PPV_ARGS(d.pipeline_state_fade_depth[k].GetAddressOf())),
+                     "CreateFadeDepthPSO");
+            // colour: blended over the scene where the prepass left its depth (reverse-Z: GREATER_EQUAL), no write
+            auto& blend = g.BlendState.RenderTarget[0];
+            blend.BlendEnable = TRUE;
+            blend.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+            blend.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+            blend.BlendOp = D3D12_BLEND_OP_ADD;
+            blend.SrcBlendAlpha = D3D12_BLEND_ONE;
+            blend.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+            blend.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+            blend.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+            g.DepthStencilState.DepthWriteMask = D3D12_DEPTH_WRITE_MASK_ZERO;
+            throw_hr(d.device->CreateGraphicsPipelineState(&g, IID_PPV_ARGS(d.pipeline_state_fade_color[k].GetAddressOf())),
+                     "CreateFadeColorPSO");
+        }
+    }
     // Vegetation cutout (OMSI_VEG_CUTOUT): blend OFF + depth write ON so alpha-tested foliage
     // writes depth and stops overdrawing (alpha-blend billboards shade every layer).
     {
